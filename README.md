@@ -19,9 +19,9 @@ Một ứng dụng chat **ngang hàng (P2P)** cho các máy cùng LAN/Wi-Fi. M�
 
 | Ai | Chính | File đảm nhận |
 |---|---|---|
-| Member 1 | UDP Discovery, Status, tích hợp ứng dụng | `src/discovery.py`, `src/main.py` |
-| Member 2 | TCP Chat, framing và TCP listener | `src/chat.py`, `src/protocol.py` (dùng chung) |
-| Member 3 | TCP File Transfer và Tkinter GUI | `src/file_transfer.py`, `src/gui.py` |
+| Phạm Yến Trân | UDP Discovery, Status, tích hợp ứng dụng | `src/discovery.py`, `src/main.py` |
+| Trần Thiên Trí | TCP Chat, framing và TCP listener | `src/chat.py`, `src/protocol.py` (dùng chung) |
+| Đoàn Khánh Như | TCP File Transfer và Tkinter GUI | `src/file_transfer.py`, `src/gui.py` |
 
 **Cả nhóm** hỗ trợ tích hợp, test hai máy, chụp Wireshark, viết báo cáo và demo. Member 1–2 phải giúp Member 3 kết nối các chức năng vào GUI, không để Member 3 tự xử lý toàn bộ tích hợp.
 
