@@ -3,10 +3,15 @@
 **File chính:** `src/chat.py`, `src/protocol.py` (file protocol là **dùng chung**)  
 **Mục tiêu:** Hai máy chat hai chiều, chuyển hội thoại được và có unread.
 
+> Trước khi code: lấy bản member 3 đã merge vào main, đọc
+> [TEAM_WORKFLOW](TEAM_WORKFLOW.md) và triển khai đúng API `ChatService`.
+> Framing v1 đã có trong `protocol.py`: import và dùng lại. Bạn sửa `chat.py`
+> và test chat; member 1 sửa main.py, member 3 sửa GUI/file khi cần.
+
 ## Việc cần làm (theo thứ tự)
 
 - [ ] Thử TCP echo client/server: `socket` → `bind/listen/accept` → `connect` → gửi/nhận.
-- [ ] Cùng nhóm **chốt framing** và cách phân biệt kết nối chat/file trong [PROTOCOL](PROTOCOL.md).
+- [ ] Đọc và dùng framing v1, OPEN phân loại chat/file trong [PROTOCOL](PROTOCOL.md). Mọi thay đổi phần dùng chung cần PR riêng và review ảnh hưởng file transfer.
 - [ ] TCP listener chấp nhận kết nối từ các peer, không khóa GUI.
 - [ ] Kết nối đến peer bằng **IP + TCP port từ Discovery**.
 - [ ] Gửi và nhận chat hai chiều; đọc đủ bytes cho mỗi tin nhắn, kể cả message dài hoặc nhiều message liên tiếp.
