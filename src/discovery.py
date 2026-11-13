@@ -1,231 +1,190 @@
-import queue
+import errno
+import ipaddress
 import socket
 import threading
 import time
-import uuid
+import unicodedata
+
+from .protocol import peer_id
+
+
+def validate_name(name):
+    if not isinstance(name, str):
+        raise ValueError("Name must be a string")
+    if not 1 <= len(name.encode("utf-8")) <= 64:
+        raise ValueError("Name must contain 1 to 64 UTF-8 bytes")
+    if "|" in name or any(unicodedata.category(c) == "Cc" for c in name):
+        raise ValueError("Name cannot contain delimiters or control characters")
+    return name
+
+
+def validate_ip(ip):
+    address = ipaddress.IPv4Address(ip)
+    if address.is_unspecified or address.is_multicast or str(address) == "255.255.255.255":
+        raise ValueError("A concrete IPv4 endpoint is required")
+    return str(address)
 
 
 class DiscoveryService:
-    def __init__(
-        self,
-        name,
-        tcp_port,
-        discovery_port=4000,
-        broadcast_ip="255.255.255.255",
-        heartbeat_interval=3.0,
-        peer_timeout=10.0,
-    ):
-        if not name.strip() or "|" in name:
-            raise ValueError("Name must be non-empty and cannot contain '|'")
+    HEARTBEAT_INTERVAL = 3.0
+    PEER_TIMEOUT = 10.0
+    MAX_DATAGRAM = 512
 
-        if not 1 <= tcp_port <= 65535:
-            raise ValueError("TCP port must be between 1 and 65535")
+    def __init__(self, local_peer, event_queue, udp_port=9999):
+        self.local_peer = dict(local_peer)
+        self.local_peer["name"] = validate_name(local_peer["name"])
+        self.local_peer["ip"] = validate_ip(local_peer["ip"])
+        expected = peer_id(self.local_peer["ip"], local_peer["tcp_port"])
+        if local_peer.get("peer_id") != expected:
+            raise ValueError("Local peer ID must match IPv4:TCP_port")
+        if local_peer.get("status") not in ("online", "away"):
+            raise ValueError("Status must be online or away")
+        if type(udp_port) is not int or not 1 <= udp_port <= 65535:
+            raise ValueError("UDP port must be between 1 and 65535")
+        self.events = event_queue
+        self.udp_port = udp_port
+        self._peers = {}
+        self._lock = threading.RLock()
+        self._lifecycle = threading.RLock()
+        self._stop = threading.Event()
+        self._thread = None
+        self._receiver = None
+        self._sender = None
+        self._next_send = 0.0
 
-        if not 1 <= discovery_port <= 65535:
-            raise ValueError("Discovery port must be between 1 and 65535")
+    def _report_error(self, error):
+        self.events.put({"type": "operation_failed", "error": f"Discovery: {error}"})
 
-        if heartbeat_interval <= 0 or peer_timeout <= 0:
-            raise ValueError("Time intervals must be positive")
+    def start_discovery(self):
+        with self._lifecycle:
+            if self._thread is not None:
+                if self._thread.is_alive() and not self._stop.is_set():
+                    return
+                raise RuntimeError("Stop discovery before restarting a failed worker")
+            try:
+                self._stop.clear()
+                self._receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self._receiver.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self._receiver.bind(("", self.udp_port))
+                self._receiver.settimeout(0.1)
+                self._sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self._sender.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                self._sender.bind((self.local_peer["ip"], 0))
+                self._sender.settimeout(0.5)
+                with self._lock:
+                    self._send_presence()
+                self._thread = threading.Thread(target=self._run, name="udp-discovery")
+                self._thread.start()
+            except Exception as error:
+                self._thread = None
+                self._stop.set()
+                self._close_sockets()
+                self._report_error(error)
+                raise
 
-        self.name = name
-        self.tcp_port = tcp_port
-        self.discovery_port = discovery_port
-        self.broadcast_ip = broadcast_ip
-        self.heartbeat_interval = heartbeat_interval
-        self.peer_timeout = peer_timeout
+    def _close_sockets(self):
+        for attribute in ("_receiver", "_sender"):
+            sock = getattr(self, attribute)
+            if sock is not None:
+                sock.close()
+                setattr(self, attribute, None)
 
-        self.peer_id = str(uuid.uuid4())
-        self.status = "online"
-        self.peers = {}
-        self.events = queue.Queue()
-
-        self.udp_socket = None
-        self._worker = None
-        self._stop_event = threading.Event()
-        self._lock = threading.Lock()
-
-    def start(self):
-        if self._worker is not None:
-            raise RuntimeError("Stop the current service before starting again")
-
-        self._stop_event.clear()
-
-        try:
-            self.udp_socket = socket.socket(
-                socket.AF_INET,
-                socket.SOCK_DGRAM,
-            )
-
-            self.udp_socket.setsockopt(
-                socket.SOL_SOCKET,
-                socket.SO_BROADCAST,
-                1,
-            )
-
-            self.udp_socket.bind(("", self.discovery_port))
-            self.udp_socket.settimeout(0.2)
-
-            self._worker = threading.Thread(
-                target=self._run,
-                name="discovery-worker",
-            )
-            self._worker.start()
-
-        except Exception:
-            self._worker = None
-
-            if self.udp_socket is not None:
-                self.udp_socket.close()
-                self.udp_socket = None
-
-            raise
-
-    def stop(self):
-        self._stop_event.set()
-
-        if self._worker is not None:
-            self._worker.join()
-            self._worker = None
-
-        if self.udp_socket is not None:
-            self.udp_socket.close()
-            self.udp_socket = None
-
-        with self._lock:
-            self.peers.clear()
-
-    def set_status(self, status):
-        if status not in ("online", "away"):
-            raise ValueError("Status must be 'online' or 'away'")
-
-        with self._lock:
-            self.status = status
+    def stop_discovery(self):
+        with self._lifecycle:
+            self._stop.set()
+            if self._thread is not None:
+                self._thread.join(timeout=2.0)
+                if self._thread.is_alive():
+                    error = RuntimeError("Discovery worker did not stop within 2 seconds")
+                    self._report_error(error)
+                    raise error
+                self._thread = None
+            self._close_sockets()
+            with self._lock:
+                for pid in self._peers:
+                    self.events.put({"type": "peer_removed", "peer_id": pid})
+                self._peers.clear()
 
     def get_peers(self):
         with self._lock:
-            return [peer.copy() for peer in self.peers.values()]
+            return {pid: peer.copy() for pid, peer in self._peers.items()}
 
-    def send_presence(self):
-        with self._lock:
-            status = self.status
-
-        message = (
-            f"{self.peer_id}|{self.name}|"
-            f"{self.tcp_port}|{status}"
-        )
-
-        self.udp_socket.sendto(
-            message.encode("utf-8"),
-            (self.broadcast_ip, self.discovery_port),
-        )
-
-    def parse_presence(self, data, sender_ip):
-        try:
-            message = data.decode("utf-8")
-            fields = message.split("|")
-
-            if len(fields) != 4:
-                return None
-
-            peer_id, name, port_text, status = fields
-            peer_id = str(uuid.UUID(peer_id))
-            tcp_port = int(port_text)
-
-        except (UnicodeDecodeError, ValueError):
-            return None
-
-        if not name.strip():
-            return None
-
-        if not 1 <= tcp_port <= 65535:
-            return None
-
+    def set_status(self, status):
         if status not in ("online", "away"):
+            raise ValueError("Status must be online or away")
+        with self._lifecycle, self._lock:
+            self.local_peer["status"] = status
+            self.events.put({"type": "status_changed", "status": status})
+            if self._sender is not None and not self._stop.is_set():
+                try:
+                    self._send_presence()
+                except OSError as error:
+                    self._report_error(error)
+                    raise
+
+    def _send_presence(self):
+        # Caller owns _lock; status changes and scheduled sends cannot interleave.
+        message = "HELLO|{name}|{tcp_port}|{status}".format(**self.local_peer)
+        self._sender.sendto(message.encode("utf-8"), ("255.255.255.255", self.udp_port))
+        self._next_send = time.monotonic() + self.HEARTBEAT_INTERVAL
+
+    def _parse_presence(self, data, source_ip):
+        if len(data) > self.MAX_DATAGRAM:
             return None
+        try:
+            fields = data.decode("utf-8").split("|")
+            if len(fields) != 4 or fields[0] != "HELLO":
+                return None
+            _, name, port_text, status = fields
+            validate_name(name)
+            ip = validate_ip(source_ip)
+            if not port_text or not port_text.isascii() or not port_text.isdecimal():
+                return None
+            port = int(port_text)
+            pid = peer_id(ip, port)
+            if status not in ("online", "away"):
+                return None
+        except (ValueError, UnicodeError, OSError):
+            return None
+        return {"peer_id": pid, "name": name, "ip": ip, "tcp_port": port,
+                "status": status, "last_seen": time.monotonic()}
 
-        return {
-            "peer_id": peer_id,
-            "name": name,
-            "ip": sender_ip,
-            "tcp_port": tcp_port,
-            "status": status,
-        }
-
-    def update_peer(self, peer):
-        if peer["peer_id"] == self.peer_id:
+    def _accept_presence(self, data, source_ip):
+        peer = self._parse_presence(data, source_ip)
+        if peer is None or peer["peer_id"] == self.local_peer["peer_id"]:
             return
-
-        peer_key = (peer["ip"], peer["tcp_port"])
-
         with self._lock:
-            previous = self.peers.get(peer_key)
+            self._peers[peer["peer_id"]] = peer
+            self.events.put({"type": "peer_upsert", "peer": peer.copy()})
 
-            changed = previous is None or any(
-                previous[field] != peer[field]
-                for field in ("peer_id", "name", "status")
-            )
-
-            peer["last_seen"] = time.monotonic()
-            self.peers[peer_key] = peer
-
-            if changed:
-                event_type = (
-                    "PEER_ADDED"
-                    if previous is None
-                    else "PEER_UPDATED"
-                )
-
-                self.events.put({
-                    "type": event_type,
-                    "peer": peer.copy(),
-                })
-
-    def remove_expired_peers(self):
-        current_time = time.monotonic()
-
+    def _expire_peers(self):
+        now = time.monotonic()
         with self._lock:
-            expired_keys = [
-                peer_key
-                for peer_key, peer in self.peers.items()
-                if current_time - peer["last_seen"] > self.peer_timeout
-            ]
-
-            for peer_key in expired_keys:
-                peer = self.peers.pop(peer_key)
-
-                self.events.put({
-                    "type": "PEER_REMOVED",
-                    "peer": peer.copy(),
-                })
+            expired = [pid for pid, peer in self._peers.items()
+                       if now - peer["last_seen"] > self.PEER_TIMEOUT]
+            for pid in expired:
+                del self._peers[pid]
+                self.events.put({"type": "peer_removed", "peer_id": pid})
 
     def _run(self):
-        next_heartbeat = time.monotonic()
-
         try:
-            while not self._stop_event.is_set():
-                if time.monotonic() >= next_heartbeat:
-                    self.send_presence()
-                    next_heartbeat = (
-                        time.monotonic() + self.heartbeat_interval
-                    )
-
+            while not self._stop.is_set():
+                with self._lock:
+                    if not self._stop.is_set() and time.monotonic() >= self._next_send:
+                        self._send_presence()
                 try:
-                    data, address = self.udp_socket.recvfrom(4096)
+                    # Extra byte detects oversized packets instead of accepting a prefix.
+                    data, address = self._receiver.recvfrom(self.MAX_DATAGRAM + 1)
                 except socket.timeout:
                     pass
+                except OSError as error:
+                    # Windows may reject oversized datagrams rather than truncate them.
+                    if error.errno != errno.EMSGSIZE and getattr(error, "winerror", None) != 10040:
+                        raise
                 else:
-                    sender_ip, _ = address
-                    peer = self.parse_presence(data, sender_ip)
-
-                    if peer is not None:
-                        self.update_peer(peer)
-
-                self.remove_expired_peers()
-
+                    self._accept_presence(data, address[0])
+                self._expire_peers()
         except Exception as error:
-            self.events.put({
-                "type": "DISCOVERY_ERROR",
-                "message": f"{type(error).__name__}: {error}",
-            })
+            self._report_error(error)
         finally:
-            self._stop_event.set()
+            self._stop.set()
