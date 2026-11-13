@@ -1,5 +1,9 @@
 # Kiến trúc hệ thống (bản dễ hiểu)
 
+> Cập nhật 09/11/2026: GUI/file/framing đã có code. Các luồng UDP/chat/main
+> bên dưới vẫn chờ member 1–2. Quyết định chính xác theo [PROTOCOL](PROTOCOL.md)
+> và [bàn giao member 3](MEMBER_3_HANDOFF.md), thay cho các đề xuất cũ.
+
 ## 1. Mô hình chính
 
 - **P2P (ngang hàng):** Không có máy chủ chat trung tâm. Mỗi ứng dụng vừa **lắng nghe TCP** từ người khác vừa **chủ động kết nối TCP** khi người dùng chọn chat.
@@ -12,7 +16,7 @@ flowchart LR
     A[Máy Quan: LAN Chat] <-->|UDP broadcast: discovery/status| B[LAN / Wi-Fi]
     B <-->|UDP broadcast| C[Máy Minh: LAN Chat]
     A <-->|TCP: chat| C
-    A <-->|TCP riêng: file transfer - đề xuất| C
+    A <-->|TCP riêng: file transfer| C
 ```
 
 ## 2. Một phiên làm việc từ đầu đến cuối
@@ -66,12 +70,13 @@ Luồng mạng **không cập nhật widget Tkinter trực tiếp**: đẩy dữ
 | File Transfer → GUI | Tên file, tổng byte, byte đã gửi, %, thành công/lỗi |
 | GUI → Modules | Lệnh chọn peer, gửi chat, đổi status, gửi file, đóng phiên |
 
-**Nhóm phải thống nhất hàm và dữ liệu cụ thể trước khi code độc lập**. Xem [PROTOCOL.md](PROTOCOL.md).
+Hàm và dữ liệu cụ thể cho triển khai member 3 đã ghi trong [PROTOCOL.md](PROTOCOL.md)
+và [MEMBER_3_HANDOFF.md](MEMBER_3_HANDOFF.md); member 1–2 dùng các hợp đồng này để ghép.
 
-## 6. Lựa chọn đơn giản đề xuất
+## 6. Lựa chọn đã dùng cho member 3
 
 - Có **một TCP listener** trên mỗi ứng dụng; phân biệt kết nối chat và kết nối gửi file theo quy ước mở đầu mà cả nhóm thống nhất.
-- **Dùng TCP connection riêng cho từng lần gửi file** để không làm nghẽn luồng chat (đây là **đề xuất thiết kế của nhóm**, không phải yêu cầu phải dùng hai connection trong đề).
+- **Dùng TCP connection riêng cho từng lần gửi file** để không làm nghẽn luồng byte chat. Đây là quyết định thiết kế triển khai, không phải yêu cầu bắt buộc của đề.
 - **Một nơi đọc mỗi socket**; không để `chat.py` và `file_transfer.py` cùng `recv()` trên cùng socket.
 - Khi file bị ngắt giữa chừng: thông báo lỗi, xóa file nhận dở trong `downloads/`.
 

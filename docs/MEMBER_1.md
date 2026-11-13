@@ -3,6 +3,11 @@
 **File chính:** `src/discovery.py`, `src/main.py`  
 **Mục tiêu:** Mở hai app trên hai máy cùng Wi-Fi, máy nào cũng thấy máy kia và biết trạng thái.
 
+> Trước khi code: lấy bản member 3 đã merge vào main, đọc
+> [TEAM_WORKFLOW](TEAM_WORKFLOW.md) và triển khai đúng API `DiscoveryService`.
+> Bạn sở hữu `discovery.py` và `main.py`; nối GUI bằng UIActions/queue,
+> không cần sửa `gui.py` hoặc `file_transfer.py`.
+
 ## Việc cần làm (theo thứ tự)
 
 - [ ] Thử UDP `sendto()` / `recvfrom()` giữa 2 chương trình.
@@ -19,7 +24,7 @@
 
 - **Member 2:** Cổng TCP thực tế quảng bá và cấu trúc peer để `connect_peer()` dùng được.
 - **Member 3:** Dữ liệu sự kiện thêm/xóa peer, đổi trạng thái để GUI hiển thị.
-- **Cả nhóm:** Mục [Cần chốt trong PROTOCOL](PROTOCOL.md#3-cần-chốt-trước-khi-code-điền-vào-bảng-này).
+- **Cả nhóm:** Dùng [PROTOCOL v1](PROTOCOL.md), peer/event/API theo [TEAM_WORKFLOW](TEAM_WORKFLOW.md). Thay hợp đồng trong PR riêng, không tự đổi tên key/hàm.
 
 ## Hoàn thành khi
 

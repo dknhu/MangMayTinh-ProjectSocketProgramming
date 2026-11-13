@@ -1,6 +1,12 @@
 # LAN Chat & File Sharing (TCP/UDP)
 
-> **Trạng thái:** Bộ khung tài liệu và mã nguồn rỗng. Chưa có chức năng nào chạy được.
+> **Trạng thái 09/11/2026:** Đã triển khai phần **Member 3**: Tkinter GUI,
+> gửi/nhận file TCP nền, progress, SHA-256, xác nhận và dọn file dở; có framing
+> dùng chung, bản chạy thử độc lập và kiểm thử. `discovery.py`, `chat.py`, `main.py`
+> của Member 1–2 còn trống; toàn ứng dụng LAN chưa tích hợp.
+>
+> Chạy ngay: `python -m src.member3_demo`. **File TCP thật; peer/status/chat của
+> bản thử là mô phỏng.** Xem [hướng dẫn Member 3](docs/MEMBER_3_HANDOFF.md).
 
 ## 1. Project này làm gì?
 
@@ -20,7 +26,7 @@ Một ứng dụng chat **ngang hàng (P2P)** cho các máy cùng LAN/Wi-Fi. M�
 | Ai | Chính | File đảm nhận |
 |---|---|---|
 | Phạm Yến Trân | UDP Discovery, Status, tích hợp ứng dụng | `src/discovery.py`, `src/main.py` |
-| Trần Thiên Trí | TCP Chat, framing và TCP listener | `src/chat.py`, `src/protocol.py` (dùng chung) |
+| Trần Thiên Trí | TCP Chat và TCP listener; điều phối protocol chung | `src/chat.py`; dùng `src/protocol.py` v1 đã có |
 | Đoàn Khánh Như | TCP File Transfer và Tkinter GUI | `src/file_transfer.py`, `src/gui.py` |
 
 **Cả nhóm** hỗ trợ tích hợp, test hai máy, chụp Wireshark, viết báo cáo và demo. Member 1–2 phải giúp Member 3 kết nối các chức năng vào GUI, không để Member 3 tự xử lý toàn bộ tích hợp.
@@ -52,12 +58,16 @@ LAN_Chat_Simplified/
 
 1. **README** (file này): hiểu phạm vi và ai làm gì.
 2. [ARCHITECTURE](docs/ARCHITECTURE.md): hiểu luồng UDP → TCP → GUI.
-3. [PROTOCOL](docs/PROTOCOL.md): cả nhóm thống nhất định dạng truyền dữ liệu trước khi code.
+3. [PROTOCOL](docs/PROTOCOL.md): quy ước v1 đã chọn cho triển khai member 3 và hợp đồng để member 1–2 tích hợp.
 4. [MEMBER_1](docs/MEMBER_1.md), [MEMBER_2](docs/MEMBER_2.md), [MEMBER_3](docs/MEMBER_3.md): ai đọc file của người đó.
 
 ## 5. Cách làm nhóm (Git)
 
-- Tạo các branch `feature/udp`, `feature/chat`, `feature/file-gui` từ `main`.
+Đọc [TEAM_WORKFLOW](docs/TEAM_WORKFLOW.md): phân quyền sửa file, API cụ thể cho
+DiscoveryService/ChatService, event GUI, cách đưa bản member 3 lên nền chung và
+thứ tự merge. Member 1–2 cập nhật main có bản member 3 trước khi triển khai.
+
+- Member 1 dùng `feature/udp`, member 2 dùng `feature/chat`, member 3 dùng `nhukei`; lấy nền từ `main` đã cập nhật.
 - Chỉ sửa file mình sở hữu; thay đổi `protocol.py` cần cả nhóm thống nhất.
 - Mỗi phần làm xong, tạo pull request; một người khác xem rồi mới merge.
 - **Ghép thử sớm**: UDP+GUI trước; chat+GUI tiếp theo; file+chat cuối cùng.
@@ -70,15 +80,20 @@ LAN_Chat_Simplified/
 - [ ] **Mốc 4:** Gửi file có progress, lưu đúng, vẫn chat được; xử lý lỗi.
 - [ ] **Mốc 5:** Test trên ít nhất 2 máy thật, ảnh Wireshark, báo cáo và diễn tập demo.
 
-## 7. Cách chạy (sau khi đã code)
+## 7. Cách chạy và kiểm thử
 
-Dự kiến dùng **Python 3 + thư viện chuẩn** (`socket`, `threading`, `tkinter`). Khi đã triển khai xong:
+Dùng **Python 3 + thư viện chuẩn** (`socket`, `threading`, `tkinter`); không cần pip.
+Đã kiểm tra bằng Python 3.14.6/Tk 8.6.15 trên Windows. Từ thư mục chứa README:
 
 ```bash
-python -m src.main
+python -m src.member3_demo
+python -X utf8 -m unittest discover -s tests -v
 ```
 
-> Hiện file `.py` đang rỗng, lệnh này **chưa chạy ra ứng dụng**. Cách truyền username/port sẽ được bổ sung khi nhóm chốt và làm xong phần khởi động.
+Để thử file TCP thật giữa hai instance, xem các lệnh với `--port`, `--peer`,
+`--downloads` ở [MEMBER_3_HANDOFF](docs/MEMBER_3_HANDOFF.md#2-chạy-ngay).
+`python -m src.main` chưa khởi động ứng dụng vì phần member 1–2 chưa triển khai.
+Demo hai máy, UDP discovery và chat TCP thật cần kiểm tra lại sau tích hợp.
 
 ## 8. Yêu cầu nộp theo đề
 
