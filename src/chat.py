@@ -296,6 +296,8 @@ class ChatService:
                     raise ConnectionError("Phiên chat đã đóng")
                 self._sockets.add(sock)
             sock.settimeout(3)
+            # OPEN identity must match the source IP selected by --ip.
+            sock.bind((self._local["ip"], 0))
             sock.connect(address)
             send_frame(sock, {"type": "OPEN", "purpose": "chat",
                               "peer_id": self._local["peer_id"], "name": self._local["name"],

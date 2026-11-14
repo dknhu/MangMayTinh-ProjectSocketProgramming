@@ -185,6 +185,8 @@ class FileTransferManager:
             self._attach(job, sock)
             sock.settimeout(self.timeout)
             self._check(job)
+            # Keep the TCP source consistent with the advertised peer identity.
+            sock.bind((self.local_peer["ip"], 0))
             sock.connect((peer["ip"], peer["tcp_port"]))
             send_frame(sock, {"type": "OPEN", "purpose": "file",
                               "peer_id": self.local_peer["peer_id"],

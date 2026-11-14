@@ -1,11 +1,12 @@
 # LAN Chat & File Sharing (TCP/UDP)
 
-> **Trạng thái 09/11/2026:** Đã triển khai phần **Member 3**: Tkinter GUI,
-> gửi/nhận file TCP nền, progress, SHA-256, xác nhận và dọn file dở; có framing
-> dùng chung, bản chạy thử độc lập và kiểm thử. `discovery.py`, `chat.py`, `main.py`
-> của Member 1–2 còn trống; toàn ứng dụng LAN chưa tích hợp.
+> **Trạng thái 15/11/2026:** Đã tích hợp UDP discovery/status của Member 1,
+> TCP chat/listener của Member 2 với GUI và truyền file của Member 3.
+> Có kiểm thử UDP/TCP cục bộ, history/unread, truyền file và xử lý lỗi khởi động.
+> Cần kiểm tra broadcast và kết nối trên ít nhất hai máy LAN thực tế.
 >
-> Chạy ngay: `python -m src.member3_demo`. **File TCP thật; peer/status/chat của
+> Ứng dụng: `python -m src.main --name TenBan --ip <IPv4-LAN>`.
+> Bản thử riêng: `python -m src.member3_demo`. **File TCP thật; peer/status/chat của
 > bản thử là mô phỏng.** Xem [hướng dẫn Member 3](docs/MEMBER_3_HANDOFF.md).
 
 ## 1. Project này làm gì?
@@ -87,13 +88,16 @@ Dùng **Python 3 + thư viện chuẩn** (`socket`, `threading`, `tkinter`); kh�
 
 ```bash
 python -m src.member3_demo
+python -m src.main --name TenBan --ip 192.168.1.10 --tcp-port 5000
 python -X utf8 -m unittest discover -s tests -v
 ```
 
 Để thử file TCP thật giữa hai instance, xem các lệnh với `--port`, `--peer`,
 `--downloads` ở [MEMBER_3_HANDOFF](docs/MEMBER_3_HANDOFF.md#2-chạy-ngay).
-`python -m src.main` chưa khởi động ứng dụng vì phần member 1–2 chưa triển khai.
-Demo hai máy, UDP discovery và chat TCP thật cần kiểm tra lại sau tích hợp.
+Với ứng dụng tích hợp, thay `192.168.1.10` bằng IPv4 LAN của máy đang chạy;
+máy thứ hai dùng IP của chính nó. TCP mặc định 5000, UDP broadcast dùng 9999.
+Cho phép ứng dụng qua firewall trên mạng LAN. Nhiều instance cùng máy cần
+`--tcp-port` khác nhau. Demo hai máy và UDP broadcast cần kiểm tra trên LAN thực tế.
 
 ## 8. Yêu cầu nộp theo đề
 
