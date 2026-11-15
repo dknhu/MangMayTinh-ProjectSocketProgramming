@@ -61,8 +61,12 @@ class FileDemoListener:
             opening, _ = recv_frame(conn)
             if self._stopping.is_set():
                 return
+            with self._lock:
+                if self._stopping.is_set():
+                    return
+                self._pending.discard(conn)
+                transferred = True  # Manager owns even a rejected handoff.
             self.manager.receive_file(conn, opening, address[0])
-            transferred = True
         except Exception as exc:
             if not self._stopping.is_set():
                 self.manager.events.put({"type": "operation_failed", "error": str(exc)})
@@ -88,7 +92,8 @@ class FileDemoListener:
 
 
 class DemoBackend:
-    def __init__(self, local, events, target=None, downloads=None, host="0.0.0.0"):
+    def __init__(self, local, events, target=None, downloads=None, host="0.0.0.0",
+                 listen_port=None, sample_peers=True):
         self.local = local
         self.events = events
         self._lock = threading.RLock()
@@ -97,10 +102,14 @@ class DemoBackend:
         self.peers = {}
         self.transfers = FileTransferManager(local, events, **(
             {"downloads_dir": downloads} if downloads is not None else {}))
-        self.listener = FileDemoListener(self.transfers, host, local["tcp_port"])
+        self.listener = FileDemoListener(
+            self.transfers, host, local["tcp_port"] if listen_port is None else listen_port)
+        self.local = {**local, "tcp_port": self.listener.port,
+                      "peer_id": peer_id(local["ip"], self.listener.port)}
+        self.transfers.local_peer = dict(self.local)
         if target:
             self.add_peer(target)
-        else:
+        elif sample_peers:
             for number, name in ((5001, "Minh (mô phỏng)"), (5002, "Lan (mô phỏng)")):
                 if number == local["tcp_port"]:
                     number += 10
@@ -116,6 +125,7 @@ class DemoBackend:
 
     def _publish(self, pid):
         state = self._state(pid)
+        state["messages"] = state["messages"][-500:]
         state["revision"] += 1
         self.events.put({"type": "conversation", "peer_id": pid,
                          "messages": [dict(message) for message in state["messages"]],
@@ -173,6 +183,8 @@ class DemoBackend:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--pair", action="store_true",
+                        help="Mở Như và Minh: chat mẫu nội bộ, truyền tệp TCP thật")
     parser.add_argument("--name", default="Quan")
     parser.add_argument("--ip", default="127.0.0.1", help="IPv4 cục bộ dùng trong OPEN")
     parser.add_argument("--bind", default="0.0.0.0")
@@ -180,6 +192,10 @@ def main():
     parser.add_argument("--peer", help="IP:TCP_PORT đích (thêm thủ công, không phải UDP discovery)")
     parser.add_argument("--downloads", type=Path)
     args = parser.parse_args()
+    if args.pair:
+        from .member3_pair_demo import run_pair_demo
+        run_pair_demo(args.downloads)
+        return
     backend = None
     try:
         local = {"name": args.name, "ip": args.ip, "tcp_port": args.port,

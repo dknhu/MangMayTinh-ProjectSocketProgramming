@@ -8,6 +8,13 @@
 > và [kết quả kiểm thử](MEMBER_3_VALIDATION.md). Checkbox dưới đây phân biệt
 > kiểm thử component với nghiệm thu ứng dụng LAN đầy đủ.
 
+> **Giao diện 13/11/2026:** Đã áp dụng tông hồng pastel, icon pixel và bố cục
+> sidebar/chat/truyền tệp/ô nhập. Xem [thiết kế và ảnh preview](MEMBER_3_UI.md).
+> API và event tích hợp giữ nguyên; toàn bộ 48 test local đạt.
+
+> Thử hai cửa sổ Như ↔ Minh bằng `python -m src.member3_demo --pair`.
+> Chat nội bộ mô phỏng, file TCP thật; hướng dẫn ở MEMBER_3_HANDOFF.
+
 ## A. GUI — làm khung trước
 
 - [x] Tạo cửa sổ Tkinter có: tên user, status Online/Away, danh sách peer, vùng chat, ô nhập, nút gửi, nút chọn file.

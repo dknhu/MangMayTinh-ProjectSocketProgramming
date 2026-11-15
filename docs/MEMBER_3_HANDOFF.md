@@ -24,6 +24,29 @@ chưa được nghiệm thu. Bản local không giả thành công các bước 
 
 ## 2. Chạy ngay
 
+### Demo hai cửa sổ Như ↔ Minh (13/11/2026)
+
+Chạy **một lệnh** để kiểm tra ngay GUI và truyền tệp mà không cần cấu hình peer:
+
+```powershell
+python -m src.member3_demo --pair
+```
+
+- Tự mở Như và Minh, chọn sẵn đối phương và hiển thị cùng đoạn hội thoại mẫu.
+- Gõ ở Như, nhấn Gửi: tin xuất hiện ở Minh; trả lời từ Minh xuất hiện ở Như.
+- Bấm **Tệp** ở một cửa sổ, chọn file; theo dõi trạng thái Hoàn tất ở cả hai.
+- File nhận bên Như: `downloads/pair-demo/nhu/`; bên Minh: `downloads/pair-demo/minh/`.
+- Hai listener file bind loopback và tự chọn cổng trống; không cần tự nhập IP/port.
+- Đóng một cửa sổ làm peer đó offline ở cửa sổ còn lại. Đóng cả hai sẽ dừng demo.
+- Đổi thư mục nhận bằng `python -m src.member3_demo --pair --downloads <thu-muc>`;
+  bên trong vẫn tách thư mục `nhu/` và `minh/`.
+
+**Chat giữa hai cửa sổ được chuyển nội bộ trong cùng process để thử GUI,
+không phải TCP ChatService của Member 2. File truyền qua TCP thật, kiểm SHA-256
+và xác nhận lưu thật.** Không dùng chế độ này để nghiệm thu discovery/chat LAN.
+Chế độ demo một cửa sổ và lệnh chạy hai instance độc lập bên dưới vẫn giữ nguyên.
+
+
 Mở terminal tại thư mục chứa README:
 
 ```powershell
