@@ -12,6 +12,47 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 
+# Drawn in Tk itself: no downloaded font, raster asset or extra dependency.
+PALETTE = {
+    "background": "#FCE8EE", "paper": "#FFFAF5", "panel": "#FFF1F3",
+    "pink": "#F5C0D2", "pink_light": "#FBDCE6", "accent": "#A6476C",
+    "border": "#784253", "ink": "#64374B", "muted": "#986F7F",
+    "line": "#E7B4C7", "white": "#FFFFFF", "green": "#527862",
+    "incoming": "#F9DFE8", "outgoing": "#F3BDCF", "error": "#A23250",
+}
+
+def _pixel_image(master, kind, scale=3):
+    drawings = {
+        "heart": (
+            "............", ".##..##.....", "#pp##pp#....", "#pppppp#....",
+            "#pppppp#....", ".#pppp#.....", "..#pp#......", "...##.......",
+        ),
+        "chat": (
+            ".#########..", "#wwwwwwwww#.", "#wwwwwwwww#.", "#ww#ww#www#.",
+            "#wwwwwwwww#.", "#ww####www#.", ".##ww#####..", "..#w#.......",
+            "..##........",
+        ),
+        "flower": (
+            "....###.....", "...#ppp#....", ".###ppp###..", "#pppyyyppp#.",
+            "#pppyyyppp#.", ".###ppp###..", "...#ppp#....", "....###.....",
+        ),
+        "file": (
+            "..######....", "..#wwww##...", "..#wwww#w#..", "..#wwww###..",
+            "..#wwwwww#..", "..#wppppw#..", "..#wwwwww#..", "..########..",
+        ),
+    }
+    rows = drawings[kind]
+    image = tk.PhotoImage(master=master, width=12 * scale, height=len(rows) * scale)
+    colors = {"#": PALETTE["border"], "p": PALETTE["pink"],
+              "w": PALETTE["paper"], "y": "#F1CF87"}
+    for y, row in enumerate(rows):
+        for x, value in enumerate(row):
+            if value in colors:
+                image.put(colors[value], to=(x * scale, y * scale,
+                                             (x + 1) * scale, (y + 1) * scale))
+    return image
+
+
 @dataclass
 class UIActions:
     # These callbacks must enqueue network work and return promptly. The GUI
@@ -51,102 +92,305 @@ class ChatWindow:
         self._poll_id = self.root.after(self.POLL_MS, self._poll_events)
 
     def _build(self, username, demo):
-        self.root.title(f"LAN Chat — {username}")
-        self.root.geometry("1080x740")
-        self.root.minsize(820, 620)
+        c = PALETTE
+        self.root.title(f"chat.exe — {username}")
+        self.root.geometry("1140x820")
+        self.root.minsize(920, 700)
+        self.root.configure(background=c["background"])
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
-        style = ttk.Style(self.root)
-        if "clam" in style.theme_names():
-            style.theme_use("clam")
-        style.configure("Treeview", rowheight=28)
-        top = ttk.Frame(self.root, padding=(14, 10))
-        top.grid(row=0, column=0, sticky="ew")
+        self._icons = {kind: _pixel_image(self.root, kind) for kind in
+                       ("heart", "chat", "flower", "file")}
+        self.root.iconphoto(True, self._icons["chat"])
+        self._style()
+        self._username = username
+        self._demo = demo
+
+        # Window-like title strip; actual window management remains native.
+        top = tk.Frame(self.root, background=c["pink"], highlightthickness=2,
+                       highlightbackground=c["border"], padx=16, pady=10)
+        top.grid(row=0, column=0, sticky="ew", padx=20, pady=(20, 12))
         top.columnconfigure(1, weight=1)
-        ttk.Label(top, text=f"LAN Chat  |  {username}", font=("Segoe UI", 14, "bold")).grid(
-            row=0, column=0, sticky="w")
-        self.status_var = tk.StringVar(value="online")
-        self.status_box = ttk.Combobox(top, textvariable=self.status_var,
-                                       values=("online", "away"), state="readonly", width=9)
-        self.status_box.grid(row=0, column=2, padx=8)
-        self.status_box.bind("<<ComboboxSelected>>", self._on_status)
-        ttk.Button(top, text="Trợ giúp", command=self.show_help).grid(row=0, column=3, padx=4)
-        ttk.Button(top, text="Thoát", command=self.close).grid(row=0, column=4, padx=4)
-        body = ttk.Panedwindow(self.root, orient="horizontal")
-        body.grid(row=1, column=0, sticky="nsew", padx=14)
-        left = ttk.Frame(body, padding=(0, 0, 10, 0))
+        tk.Label(top, image=self._icons["chat"], background=c["pink"]).grid(
+            row=0, column=0, rowspan=2, padx=(0, 12))
+        tk.Label(top, text="chat.exe", background=c["pink"], foreground=c["ink"],
+                 font=("Consolas", 25, "bold")).grid(row=0, column=1, sticky="w")
+        tk.Label(top, text="MỘT GÓC NHỎ, KẾT NỐI CÙNG NHAU",
+                 background=c["pink"], foreground=c["ink"],
+                 font=("Segoe UI", 8, "bold")).grid(row=1, column=1, sticky="w")
+        tk.Label(top, text="✧  ♡  ✧", background=c["pink"], foreground=c["accent"],
+                 font=("Segoe UI", 18)).grid(row=0, column=2, rowspan=2, padx=18)
+        ttk.Button(top, text="Trợ giúp", style="Rose.TButton",
+                   command=self.show_help).grid(row=0, column=3, rowspan=2, padx=4)
+        ttk.Button(top, text="Thoát", style="Rose.TButton",
+                   command=self.close).grid(row=0, column=4, rowspan=2, padx=(4, 0))
+
+        body = tk.Frame(self.root, background=c["background"])
+        body.grid(row=1, column=0, sticky="nsew", padx=20)
+        body.columnconfigure(0, minsize=260)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        left = self._panel(body, c["paper"])
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(1, weight=1)
-        ttk.Label(left, text="NGƯỜI DÙNG", font=("Segoe UI", 10, "bold")).grid(
-            row=0, column=0, sticky="w", pady=(0, 8))
-        self.peer_tree = ttk.Treeview(left, columns=("name", "address", "status", "unread"),
-                                      show="headings", selectmode="browse", height=12)
-        for column, title, width in (("name", "Tên", 100), ("address", "IP : Port", 140),
-                                     ("status", "Trạng thái", 65), ("unread", "Mới", 40)):
+        left.rowconfigure(2, weight=1)
+        profile = tk.Frame(left, background=c["pink_light"], padx=16, pady=16)
+        profile.grid(row=0, column=0, sticky="ew")
+        profile.columnconfigure(1, weight=1)
+        tk.Label(profile, image=self._icons["flower"], background=c["paper"],
+                 padx=7, pady=7, highlightthickness=1,
+                 highlightbackground=c["line"]).grid(row=0, column=0, rowspan=2, padx=(0, 12))
+        tk.Label(profile, text=username, background=c["pink_light"], foreground=c["ink"],
+                 font=("Segoe UI", 13, "bold"), anchor="w", width=12).grid(
+                     row=0, column=1, sticky="ew")
+        tk.Label(profile, text="Góc nhỏ của bạn", background=c["pink_light"],
+                 foreground=c["muted"], font=("Segoe UI", 9)).grid(row=1, column=1, sticky="w")
+        self.status_var = tk.StringVar(value="online")
+        self.status_box = ttk.Combobox(profile, textvariable=self.status_var,
+                                       values=("online", "away"), state="readonly",
+                                       style="Rose.TCombobox", width=12)
+        self.status_box.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        self.status_box.bind("<<ComboboxSelected>>", self._on_status)
+
+        peer_heading = tk.Frame(left, background=c["paper"], padx=16, pady=14)
+        peer_heading.grid(row=1, column=0, sticky="ew")
+        peer_heading.columnconfigure(0, weight=1)
+        tk.Label(peer_heading, text="BẠN BÈ CÙNG LAN", background=c["paper"],
+                 foreground=c["ink"], font=("Segoe UI", 9, "bold")).grid(
+                     row=0, column=0, sticky="w")
+        self.peer_count_var = tk.StringVar(value="0")
+        tk.Label(peer_heading, textvariable=self.peer_count_var,
+                 background=c["pink_light"], foreground=c["accent"],
+                 font=("Consolas", 10, "bold"), padx=7, pady=2).grid(row=0, column=1)
+
+        peer_frame = tk.Frame(left, background=c["paper"])
+        peer_frame.grid(row=2, column=0, sticky="nsew", padx=8)
+        peer_frame.columnconfigure(0, weight=1)
+        peer_frame.rowconfigure(0, weight=1)
+        self.peer_tree = ttk.Treeview(
+            peer_frame, columns=("name", "address", "status", "unread"),
+            displaycolumns=("name", "unread"), show="headings",
+            selectmode="browse", height=6, style="Rose.Peer.Treeview")
+        for column, title, width in (("name", "Tên · địa chỉ", 195),
+                                     ("address", "IP : Port", 140),
+                                     ("status", "Trạng thái", 65), ("unread", "Mới", 38)):
             self.peer_tree.heading(column, text=title)
-            self.peer_tree.column(column, width=width, minwidth=35)
-        self.peer_tree.grid(row=1, column=0, sticky="nsew")
+            self.peer_tree.column(column, width=width, minwidth=32,
+                                  stretch=column == "name",
+                                  anchor="center" if column == "unread" else "w")
+        self.peer_tree.grid(row=0, column=0, sticky="nsew")
+        self.peer_tree.tag_configure("away", foreground=c["muted"])
         self.peer_tree.bind("<<TreeviewSelect>>", self._on_peer_selected)
-        body.add(left, weight=2)
-        right = ttk.Frame(body)
+        peer_scroll = ttk.Scrollbar(peer_frame, command=self.peer_tree.yview,
+                                    style="Rose.Vertical.TScrollbar")
+        peer_scroll.grid(row=0, column=1, sticky="ns")
+        self.peer_tree.configure(yscrollcommand=peer_scroll.set)
+        tk.Label(left, text="✧  Cùng mạng, gần nhau hơn  ✧", background=c["paper"],
+                 foreground=c["muted"], font=("Segoe UI", 9), pady=16).grid(
+                     row=3, column=0, sticky="ew")
+
+        right = self._panel(body, c["paper"])
+        right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
         right.rowconfigure(1, weight=1)
-        heading = ttk.Frame(right)
-        heading.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        heading.columnconfigure(0, weight=1)
-        self.conversation_title = tk.StringVar(value="Chọn một người để bắt đầu")
-        ttk.Label(heading, textvariable=self.conversation_title,
-                  font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w")
-        self.leave_button = ttk.Button(heading, text="Rời hội thoại", command=self._on_leave)
-        self.leave_button.grid(row=0, column=1)
-        chat_frame = ttk.Frame(right)
+        heading = tk.Frame(right, background=c["panel"], padx=18, pady=13)
+        heading.grid(row=0, column=0, sticky="ew")
+        heading.columnconfigure(1, weight=1)
+        tk.Label(heading, image=self._icons["heart"], background=c["panel"]).grid(
+            row=0, column=0, rowspan=2, padx=(0, 8))
+        self.conversation_title = tk.StringVar(value="Một cuộc trò chuyện nhỏ")
+        self.conversation_detail = tk.StringVar(value="Chọn một người bạn để bắt đầu")
+        ttk.Label(heading, textvariable=self.conversation_title, style="Rose.Title.TLabel").grid(
+            row=0, column=1, sticky="w")
+        ttk.Label(heading, textvariable=self.conversation_detail,
+                  style="Rose.Detail.TLabel").grid(row=1, column=1, sticky="w", pady=(3, 0))
+        self.leave_button = ttk.Button(heading, text="Rời hội thoại",
+                                      style="Rose.TButton", command=self._on_leave)
+        self.leave_button.grid(row=0, column=2, rowspan=2, padx=(8, 0))
+
+        chat_frame = tk.Frame(right, background=c["paper"])
         chat_frame.grid(row=1, column=0, sticky="nsew")
         chat_frame.columnconfigure(0, weight=1)
         chat_frame.rowconfigure(0, weight=1)
-        self.chat_text = tk.Text(chat_frame, wrap="word", state="disabled", font=("Segoe UI", 11),
-                                 padx=12, pady=12, background="#faf8fa", relief="flat")
+        self.chat_text = tk.Text(
+            chat_frame, wrap="word", state="disabled", font=("Segoe UI", 11),
+            padx=22, pady=18, background=c["paper"], foreground=c["ink"],
+            relief="flat", borderwidth=0, highlightthickness=0, cursor="arrow",
+            width=40, height=8, spacing1=4, spacing3=6,
+            selectbackground=c["pink"], selectforeground=c["ink"])
         self.chat_text.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(chat_frame, command=self.chat_text.yview)
+        for tag, color, align in (("incoming", c["incoming"], "left"),
+                                  ("outgoing", c["outgoing"], "right")):
+            self.chat_text.tag_configure(tag, background=color, foreground=c["ink"],
+                                         justify=align, lmargin1=16, lmargin2=16,
+                                         rmargin=16, spacing1=7, spacing3=7,
+                                         lmargincolor=c["paper"], rmargincolor=c["paper"],
+                                         borderwidth=1, relief="solid")
+        self.chat_text.tag_configure("author_in", foreground=c["muted"],
+                                     font=("Segoe UI", 9, "bold"), spacing1=12)
+        self.chat_text.tag_configure("author_out", foreground=c["accent"],
+                                     font=("Segoe UI", 9, "bold"), justify="right", spacing1=12)
+        self.chat_text.tag_configure("failed", foreground=c["error"])
+        self.chat_text.tag_configure("gap", spacing1=0, spacing3=0,
+                                     font=("Segoe UI", 4))
+        self._bubble_layout = []
+        self.chat_text.bind("<Configure>", self._resize_bubbles)
+        scroll = ttk.Scrollbar(chat_frame, command=self.chat_text.yview,
+                               style="Rose.Vertical.TScrollbar")
         scroll.grid(row=0, column=1, sticky="ns")
         self.chat_text.configure(yscrollcommand=scroll.set)
-        composer = ttk.Frame(right, padding=(0, 10, 0, 0))
-        composer.grid(row=2, column=0, sticky="ew")
-        composer.columnconfigure(0, weight=1)
-        self.draft_var = tk.StringVar()
-        self.message_entry = ttk.Entry(composer, textvariable=self.draft_var, font=("Segoe UI", 11))
-        self.message_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        self.message_entry.bind("<Return>", self._on_send)
-        self.send_button = ttk.Button(composer, text="Gửi", command=self._on_send)
-        self.send_button.grid(row=0, column=1, padx=3)
-        self.file_button = ttk.Button(composer, text="Chọn file", command=self._on_file)
-        self.file_button.grid(row=0, column=2, padx=3)
-        body.add(right, weight=3)
-        bottom = ttk.Frame(self.root, padding=(14, 10))
-        bottom.grid(row=2, column=0, sticky="ew")
-        bottom.columnconfigure(0, weight=1)
-        ttk.Label(bottom, text="TRUYỀN FILE", font=("Segoe UI", 10, "bold")).grid(
-            row=0, column=0, sticky="w")
-        self.cancel_button = ttk.Button(bottom, text="Hủy lượt đang chọn", command=self._on_cancel)
-        self.cancel_button.grid(row=0, column=1, sticky="e")
-        self.transfer_tree = ttk.Treeview(bottom,
-                                          columns=("file", "peer", "direction", "progress", "state"),
-                                          show="headings", height=4, selectmode="browse")
-        for column, label, width in (("file", "File", 220), ("peer", "Peer", 150),
-                                     ("direction", "Chiều", 65), ("progress", "Tiến độ", 100),
-                                     ("state", "Trạng thái", 260)):
+        self.empty_state = tk.Frame(chat_frame, background=c["paper"])
+        tk.Label(self.empty_state, image=self._icons["chat"], background=c["paper"]).pack(pady=(0, 14))
+        tk.Label(self.empty_state, text="Xin chào, người bạn cùng LAN!",
+                 background=c["paper"], foreground=c["ink"],
+                 font=("Segoe UI", 15, "bold")).pack()
+        self.empty_hint = tk.Label(
+            self.empty_state, text="Chọn một người ở bên trái.\nMột lời chào cũng đủ để bắt đầu ♡",
+            background=c["paper"], foreground=c["muted"],
+            font=("Segoe UI", 10), justify="center")
+        self.empty_hint.pack(pady=(8, 0))
+        self.empty_state.place(relx=0.5, rely=0.46, anchor="center")
+
+        # File activity belongs to the conversation column, above the composer.
+        transfer = tk.Frame(right, background=c["panel"], padx=14, pady=10,
+                            highlightthickness=1, highlightbackground=c["line"])
+        transfer.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 10))
+        transfer.columnconfigure(0, weight=1)
+        tk.Label(transfer, text="TỆP ĐÍNH KÈM", background=c["panel"],
+                 foreground=c["ink"], font=("Segoe UI", 9, "bold")).grid(
+                     row=0, column=0, sticky="w")
+        self.cancel_button = ttk.Button(transfer, text="Hủy lượt chọn",
+                                        style="Small.Rose.TButton", command=self._on_cancel)
+        self.cancel_button.grid(row=0, column=1, sticky="e", pady=(0, 6))
+        self.transfer_tree = ttk.Treeview(
+            transfer, columns=("file", "peer", "direction", "progress", "state"),
+            show="headings", height=2, selectmode="browse", style="Rose.Transfer.Treeview")
+        for column, label, width in (("file", "Tên tệp", 160), ("peer", "Bạn bè", 90),
+                                     ("direction", "Chiều", 45), ("progress", "Tiến độ", 65),
+                                     ("state", "Trạng thái", 180)):
             self.transfer_tree.heading(column, text=label)
-            self.transfer_tree.column(column, width=width, minwidth=55)
-        self.transfer_tree.grid(row=1, column=0, columnspan=2, sticky="ew", pady=6)
+            self.transfer_tree.column(column, width=width, minwidth=35,
+                                      stretch=column in {"file", "state"})
+        self.transfer_tree.grid(row=1, column=0, columnspan=2, sticky="ew")
         self.transfer_tree.bind("<<TreeviewSelect>>", self._on_transfer_selected)
         self.progress_var = tk.DoubleVar(value=0)
-        ttk.Progressbar(bottom, variable=self.progress_var, maximum=100).grid(
-            row=2, column=0, columnspan=2, sticky="ew")
-        self.notice_var = tk.StringVar(value=(
-            "Bản thử member 3: gửi file TCP thật; peer/status/chat là dữ liệu mô phỏng."
-            if demo else "Sẵn sàng"))
-        ttk.Label(bottom, textvariable=self.notice_var, wraplength=980).grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Progressbar(transfer, variable=self.progress_var, maximum=100,
+                        style="Rose.Horizontal.TProgressbar").grid(
+                            row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+        composer = tk.Frame(right, background=c["pink_light"], padx=14, pady=12)
+        composer.grid(row=3, column=0, sticky="ew")
+        composer.columnconfigure(1, weight=1)
+        self.file_button = ttk.Button(
+            composer, text="Tệp", image=self._icons["file"], compound="left",
+            style="Rose.TButton", command=self._on_file)
+        self.file_button.grid(row=0, column=0, padx=(0, 10))
+        self.draft_var = tk.StringVar()
+        self.message_entry = ttk.Entry(composer, textvariable=self.draft_var,
+                                        font=("Segoe UI", 11), style="Rose.TEntry")
+        self.message_entry.grid(row=0, column=1, sticky="ew", ipady=7)
+        self.message_entry.bind("<Return>", self._on_send)
+        self.send_button = ttk.Button(composer, text="Gửi  ♡", style="Send.Rose.TButton",
+                                      command=self._on_send)
+        self.send_button.grid(row=0, column=2, padx=(10, 0))
+        tk.Label(composer, text="Một tin nhắn nhỏ, một ngày vui hơn.   ·   Enter để gửi",
+                 background=c["pink_light"], foreground=c["ink"],
+                 font=("Segoe UI", 8)).grid(
+                     row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        footer = tk.Frame(self.root, background=c["background"], padx=2, pady=9)
+        footer.grid(row=2, column=0, sticky="ew", padx=20)
+        footer.columnconfigure(0, weight=1)
+        self.notice_var = tk.StringVar(value="Sẵn sàng cho một lời chào.")
+        self.notice_label = tk.Label(
+            footer, textvariable=self.notice_var, background=c["background"],
+            foreground=c["ink"], font=("Segoe UI", 9), anchor="w", justify="left",
+            wraplength=1000)
+        self.notice_label.grid(row=0, column=0, sticky="ew")
+        self.notice_label.bind("<Configure>",
+                               lambda event: self.notice_label.configure(wraplength=max(100, event.width)))
+        tk.Label(footer, text="✧ ♡ ✧", background=c["background"], foreground=c["accent"],
+                 font=("Segoe UI", 12)).grid(row=0, column=1, padx=(12, 0))
+        if demo:
+            tk.Label(
+                footer, text=(demo if isinstance(demo, str) else
+                    "BẢN THỬ  ·  Peer, trạng thái và chat mô phỏng. Truyền tệp dùng TCP thật."),
+                background=c["background"], foreground=c["muted"],
+                font=("Segoe UI", 8), anchor="w").grid(
+                    row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
         self._update_controls()
+
+    def _style(self):
+        c = PALETTE
+        style = ttk.Style(self.root)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+        style.configure("Rose.TButton", background=c["paper"], foreground=c["ink"],
+                        bordercolor=c["border"], lightcolor=c["paper"], darkcolor=c["line"],
+                        borderwidth=2, padding=(11, 7), font=("Segoe UI", 9, "bold"),
+                        focuscolor=c["accent"])
+        style.map("Rose.TButton", background=[("disabled", c["panel"]),
+                  ("pressed", c["pink"]), ("active", c["pink_light"])],
+                  foreground=[("disabled", c["muted"])])
+        style.configure("Send.Rose.TButton", background=c["accent"], foreground=c["white"],
+                        bordercolor=c["border"], lightcolor=c["accent"], darkcolor=c["border"],
+                        padding=(18, 10))
+        style.map("Send.Rose.TButton", background=[("disabled", c["pink_light"]),
+                  ("pressed", c["border"]), ("active", "#94375E")],
+                  foreground=[("disabled", c["muted"]), ("!disabled", c["white"])])
+        style.configure("Small.Rose.TButton", padding=(8, 3), font=("Segoe UI", 8))
+        style.configure("Rose.Title.TLabel", background=c["panel"], foreground=c["ink"],
+                        font=("Segoe UI", 13, "bold"))
+        style.configure("Rose.Detail.TLabel", background=c["panel"], foreground=c["muted"],
+                        font=("Segoe UI", 9))
+        style.configure("Rose.TEntry", fieldbackground=c["paper"], foreground=c["ink"],
+                        bordercolor=c["border"], lightcolor=c["paper"], darkcolor=c["line"],
+                        insertcolor=c["ink"], padding=7)
+        style.map("Rose.TEntry", fieldbackground=[("disabled", c["panel"])],
+                  bordercolor=[("focus", c["accent"])])
+        style.configure("Rose.TCombobox", fieldbackground=c["paper"], background=c["paper"],
+                        foreground=c["ink"], arrowcolor=c["accent"], bordercolor=c["line"],
+                        padding=5, font=("Segoe UI", 10))
+        style.map("Rose.TCombobox", fieldbackground=[("readonly", c["paper"])],
+                  selectbackground=[("readonly", c["paper"])],
+                  selectforeground=[("readonly", c["ink"])])
+        self.root.option_add("*TCombobox*Listbox.background", c["paper"])
+        self.root.option_add("*TCombobox*Listbox.foreground", c["ink"])
+        self.root.option_add("*TCombobox*Listbox.selectBackground", c["pink"])
+        for name, height in (("Rose.Peer.Treeview", 62), ("Rose.Transfer.Treeview", 27)):
+            style.configure(name, background=c["paper"], fieldbackground=c["paper"],
+                            foreground=c["ink"], rowheight=height, borderwidth=0,
+                            font=("Segoe UI", 9), relief="flat",
+                            bordercolor=c["line"], lightcolor=c["paper"], darkcolor=c["paper"])
+            style.map(name, background=[("selected", c["pink_light"])],
+                      foreground=[("selected", c["ink"])])
+            style.configure(name + ".Heading", background=c["panel"], foreground=c["muted"],
+                            font=("Segoe UI", 8, "bold"), padding=(6, 5),
+                            borderwidth=0, relief="flat")
+            style.map(name + ".Heading", background=[("active", c["pink_light"])])
+        style.configure("Rose.Vertical.TScrollbar", background=c["pink_light"],
+                        troughcolor=c["paper"], arrowcolor=c["accent"], borderwidth=0,
+                        width=11)
+        style.configure("Rose.Horizontal.TProgressbar", background=c["accent"],
+                        troughcolor=c["pink_light"], bordercolor=c["line"],
+                        lightcolor=c["accent"], darkcolor=c["accent"], thickness=7)
+
+    @staticmethod
+    def _panel(parent, background):
+        return tk.Frame(parent, background=background, highlightthickness=2,
+                        highlightbackground=PALETTE["border"], borderwidth=0)
+
+    def _resize_bubbles(self, event=None):
+        width = max(100, self.chat_text.winfo_width() - 44)
+        font = self.chat_text.cget("font")
+        for tag, text, outgoing in self._bubble_layout:
+            longest = max((int(self.chat_text.tk.call("font", "measure", font, line))
+                           for line in text.splitlines()), default=0)
+            bubble_width = min(int(width * 0.78), max(110, longest + 36))
+            opposite = max(12, width - bubble_width)
+            left, right = (opposite, 12) if outgoing else (12, opposite)
+            self.chat_text.tag_configure(tag, lmargin1=left, lmargin2=left, rmargin=right)
 
     def _submit(self, name, *args, **context):
         if not self._closing:
@@ -212,6 +456,7 @@ class ChatWindow:
                 self.notice_var.set(f"{self._peers[pid]['name']} đã offline")
                 if self.peer_tree.exists(pid):
                     self.peer_tree.delete(pid)
+                self.peer_count_var.set(str(len(self.peer_tree.get_children())))
                 if pid == self._selected_peer:
                     self._render_conversation()
                 else:
@@ -259,6 +504,8 @@ class ChatWindow:
                 self._update_controls()
         elif name == "shutdown":
             self._destroyed = True
+            # PhotoImage finalizers must execute on the Tk thread.
+            self._icons.clear()
             self.root.destroy()
 
     def _render_peer(self, pid):
@@ -266,28 +513,57 @@ class ChatWindow:
         if not peer or peer.get("status") == "offline":
             return
         unread = self._conversations.get(pid, {}).get("unread", 0)
-        values = (peer["name"], f"{peer['ip']}:{peer['tcp_port']}", peer["status"], unread or "")
+        label = "online" if peer["status"] == "online" else "tạm vắng"
+        values = (f"{peer['name']} · {label}\n{peer['ip']}:{peer['tcp_port']}",
+                  f"{peer['ip']}:{peer['tcp_port']}", peer["status"], unread or "")
         if self.peer_tree.exists(pid):
-            self.peer_tree.item(pid, values=values)
+            self.peer_tree.item(pid, values=values, tags=(peer["status"],))
         else:
-            self.peer_tree.insert("", "end", iid=pid, values=values)
+            self.peer_tree.insert("", "end", iid=pid, values=values, tags=(peer["status"],))
+        self.peer_count_var.set(str(len(self.peer_tree.get_children())))
 
     def _render_conversation(self):
         pid = self._selected_peer
         peer = self._peers.get(pid, {})
-        self.conversation_title.set(f"{peer.get('name', pid)}  ·  {peer.get('status', '')}"
-                                    if pid else "Chọn một người để bắt đầu")
+        status = {"online": "Đang online", "away": "Tạm vắng", "offline": "Đã offline"}
+        self.conversation_title.set(peer.get("name", pid) if pid else "Một cuộc trò chuyện nhỏ")
+        self.conversation_detail.set(
+            f"{status.get(peer.get('status'), '')}  ·  {peer.get('ip', '')}:{peer.get('tcp_port', '')}"
+            if pid else "Chọn một người bạn để bắt đầu")
         # Never edit/focus the composer when incoming messages redraw history.
         old_position = self.chat_text.yview()
         at_end = old_position[1] >= 0.98
         self.chat_text.configure(state="normal")
         self.chat_text.delete("1.0", "end")
-        for message in self._conversations.get(pid, {}).get("messages", []):
-            author = "Bạn" if message.get("outgoing") else message.get("sender", peer.get("name", "Peer"))
-            state = message.get("state", "")
-            suffix = " [gửi lỗi]" if state == "failed" else ""
-            self.chat_text.insert("end", f"{author}{suffix}: {message['text']}\n\n")
+        messages = self._conversations.get(pid, {}).get("messages", [])
+        self._bubble_layout = []
+        # Reuse at most one geometry tag per retained message.
+        for tag in self.chat_text.tag_names():
+            if tag.startswith("bubble_"):
+                self.chat_text.tag_delete(tag)
+        for index, message in enumerate(messages):
+            outgoing = message.get("outgoing", False)
+            author = "Bạn" if outgoing else message.get("sender", peer.get("name", "Peer"))
+            state = {"failed": " · Gửi lỗi", "pending": " · Đang gửi"}.get(message.get("state"), "")
+            self.chat_text.insert("end", f"{author}{state}\n",
+                                  ("author_out" if outgoing else "author_in",))
+            bubble_tag = f"bubble_{index}"
+            self.chat_text.tag_configure(bubble_tag)
+            self._bubble_layout.append((bubble_tag, message["text"], outgoing))
+            tags = ("outgoing" if outgoing else "incoming", bubble_tag)
+            if message.get("state") == "failed":
+                tags += ("failed",)
+            self.chat_text.insert("end", f"  {message['text']}  \n", tags)
+            self.chat_text.insert("end", "\n", ("gap",))
+        self._resize_bubbles()
         self.chat_text.configure(state="disabled")
+        if messages:
+            self.empty_state.place_forget()
+        else:
+            self.empty_hint.configure(text=(
+                "Gửi một lời chào để bắt đầu hội thoại ♡" if pid else
+                "Chọn một người ở bên trái.\nMột lời chào cũng đủ để bắt đầu ♡"))
+            self.empty_state.place(relx=0.5, rely=0.46, anchor="center")
         if at_end:
             self.chat_text.see("end")
         else:
@@ -313,6 +589,10 @@ class ChatWindow:
         if self._selected_peer:
             self._drafts[self._selected_peer] = self.draft_var.get()
         self._selected_peer = pid
+        if pid and self.peer_tree.exists(pid):
+            self.peer_tree.selection_set(pid)
+        else:
+            self.peer_tree.selection_remove(*self.peer_tree.selection())
         self.draft_var.set(self._drafts.get(pid, ""))
         self._render_conversation()
         self.chat_text.see("end")
@@ -361,7 +641,7 @@ class ChatWindow:
             return
         current = {**previous, **event}
         self._transfers[tid] = current
-        stage = {"preparing": "Đang tính SHA-256", "transferring": "Đang truyền",
+        stage = {"preparing": "Đang chuẩn bị", "transferring": "Đang truyền",
                  "awaiting_confirmation": "Chờ bên nhận xác nhận"}.get(current.get("stage"), "Đang truyền")
         state = {"transfer_completed": "Hoàn tất", "transfer_failed": "Lỗi: " + current.get("error", ""),
                  "transfer_cancelled": "Đã hủy"}.get(current["type"], stage)

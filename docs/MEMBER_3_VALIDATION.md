@@ -64,3 +64,32 @@ không còn background thread sau khi đóng. Kiểm tra này vẫn trên cùng 
 - [ ] Ngắt Wi-Fi/tắt peer lúc đang nhận: lỗi rõ, .part bị xóa, chat khác vẫn chạy.
 - [ ] Đóng cửa sổ lúc truyền, mở lại app và kiểm tra port đã được giải phóng.
 - [ ] Chụp Wireshark/ảnh tiến độ, cập nhật phần báo cáo và diễn tập hai máy.
+
+## Cập nhật giao diện ngày 13/11/2026
+
+Đã triển khai giao diện pastel/pixel theo ảnh tham khảo. Thiết kế, lệnh chạy
+và ảnh chụp cửa sổ thật nằm trong [MEMBER_3_UI](MEMBER_3_UI.md).
+
+Toàn bộ suite đạt **43 test trong 5.242 giây**: 8 protocol, 21 file transfer,
+14 GUI. Test mới kiểm tra lịch sử 500 tin tiếng Việt/nhiều dòng, định dạng
+tin gửi/nhận và giữ draft. Test harness giải phóng wrapper Tk trên main thread;
+icon cũng được giải phóng trên Tk thread khi GUI shutdown thành công.
+
+Đã rà ảnh cửa sổ 1140 × 820 và 920 × 700; giữ nguyên UIActions và event schema.
+Không thêm thư viện runtime. Ảnh preview dùng dữ liệu minh họa, không thay cho
+nghiệm thu chat TCP/UDP và file giữa hai máy vật lý.
+
+## Demo cặp Như ↔ Minh — 13/11/2026
+
+`python -m src.member3_demo --pair` mở hai cửa sổ đã chọn nhau, có cùng đoạn chat
+mẫu. Chat được relay nội bộ để kiểm GUI; listener file vẫn dùng TCP loopback thật,
+cổng được OS chọn và thư mục nhận tách riêng từng bên.
+
+Toàn bộ suite đạt **48 test trong 5.061 giây**: 8 protocol, 21 file transfer,
+15 GUI, 4 paired-demo. Các test mới xác nhận tin xuất hiện ở cửa sổ đối phương,
+reply hai chiều, không tự echo, unread/status/history, partner đóng và file TCP
+hai chiều có nội dung/hash đúng. Test GUI bấm gửi tin ở hai cửa sổ và chọn file
+qua callback, chờ cả hai phía Hoàn tất.
+
+Đây là kiểm thử demo local; TCP ChatService, UDP discovery và hai máy LAN vẫn
+cần Member 1–2 triển khai/tích hợp/nghiệm thu.

@@ -1,3 +1,4 @@
+import gc
 from pathlib import Path
 import queue
 import tempfile
@@ -49,6 +50,11 @@ class GuiTests(unittest.TestCase):
             self.pump_until(lambda: self.window._destroyed)
         self.window._worker.join(2)
         self.assertFalse(self.window._worker.is_alive())
+        # Tk wrappers form cycles; collect on their owning thread before
+        # a later network worker can trigger cyclic GC.
+        self.window = None
+        self.root = None
+        gc.collect()
 
     def snapshot(self, pid, revision, text="hello", unread=0):
         return {"type": "conversation", "peer_id": pid, "revision": revision, "unread": unread,
@@ -64,6 +70,22 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.window.message_entry.index("insert"), 4)
         self.assertEqual(self.root.focus_get(), old_focus)
         self.assertIn("tin mới", self.window.chat_text.get("1.0", "end"))
+
+    def test_styled_multiline_history_keeps_text_and_draft(self):
+        self.window.select_peer(self.minh)
+        self.window.draft_var.set("bản nháp chưa gửi")
+        messages = [{"text": f"Tin {number} — tiếng Việt ♡\nDòng thứ hai",
+                     "outgoing": number % 2 == 1, "state": "sent"}
+                    for number in range(500)]
+        self.window.process_event({"type": "conversation", "peer_id": self.minh,
+                                   "revision": 1, "unread": 0, "messages": messages})
+        rendered = self.window.chat_text.get("1.0", "end")
+        self.assertIn(messages[0]["text"], rendered)
+        self.assertIn(messages[-1]["text"], rendered)
+        self.assertEqual(self.window.draft_var.get(), "bản nháp chưa gửi")
+        self.assertTrue(self.window.chat_text.tag_ranges("incoming"))
+        self.assertTrue(self.window.chat_text.tag_ranges("outgoing"))
+        self.assertFalse(self.window.empty_state.place_info())
 
     def test_switching_conversations_keeps_individual_drafts(self):
         self.window.select_peer(self.minh)
@@ -211,6 +233,55 @@ class GuiTests(unittest.TestCase):
             self.window._on_file()
         self.root.update()
         self.assertFalse(any(name == "send_file" for name, args in self.calls))
+
+    def test_paired_windows_exchange_chat_and_send_real_file(self):
+        from src.member3_pair_demo import create_demo_pair
+
+        with tempfile.TemporaryDirectory() as directory:
+            first, second = create_demo_pair(directory)
+            pair_windows = []
+            try:
+                for backend in (first, second):
+                    top = tk.Toplevel(self.root)
+                    top.withdraw()
+                    pair_windows.append(ChatWindow(
+                        top, backend.local["name"], backend.events, backend.actions(),
+                        demo="DEMO CẶP · Chat nội bộ mô phỏng; truyền tệp TCP thật."))
+                left, right = pair_windows
+                first_id, second_id = first.local["peer_id"], second.local["peer_id"]
+                self.pump_until(lambda: second_id in left._peers and first_id in right._peers)
+                left.select_peer(second_id)
+                right.select_peer(first_id)
+                left.draft_var.set("Chào Minh từ cửa sổ Như")
+                left._on_send()
+                self.pump_until(lambda: "Chào Minh từ cửa sổ Như" in
+                                right.chat_text.get("1.0", "end") and not left._pending_send)
+                right.draft_var.set("Như ơi, mình thấy tin rồi")
+                right._on_send()
+                self.pump_until(lambda: "Như ơi, mình thấy tin rồi" in
+                                left.chat_text.get("1.0", "end") and not right._pending_send)
+                source = Path(directory) / "test-gui-file.bin"
+                source.write_bytes(bytes(range(256)) * 2048)
+                with patch("src.gui.filedialog.askopenfilename", return_value=str(source)):
+                    left._on_file()
+                self.pump_until(lambda: bool(left._transfers) and bool(right._transfers) and
+                                all(event["type"] == "transfer_completed"
+                                    for window in pair_windows
+                                    for event in window._transfers.values()), timeout=6)
+                self.assertEqual((second.transfers.downloads_dir / source.name).read_bytes(),
+                                 source.read_bytes())
+            finally:
+                for window in pair_windows:
+                    window.close()
+                self.pump_until(lambda: all(window._destroyed for window in pair_windows))
+                for window in pair_windows:
+                    window._worker.join(2)
+                    self.assertFalse(window._worker.is_alive())
+                first.shutdown()
+                second.shutdown()
+                pair_windows.clear()
+                gc.collect()
+
 
     def test_shutdown_does_not_block_event_loop(self):
         started = threading.Event()
