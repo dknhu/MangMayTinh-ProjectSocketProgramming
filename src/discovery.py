@@ -11,6 +11,8 @@ from .protocol import peer_id
 def validate_name(name):
     if not isinstance(name, str):
         raise ValueError("Name must be a string")
+    if not name.strip():
+        raise ValueError("Name must contain a non-whitespace character")
     if not 1 <= len(name.encode("utf-8")) <= 64:
         raise ValueError("Name must contain 1 to 64 UTF-8 bytes")
     if "|" in name or any(unicodedata.category(c) == "Cc" for c in name):
