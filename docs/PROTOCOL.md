@@ -59,7 +59,15 @@ Chat dùng purpose="chat", không cần transfer_id. FILE dùng UUID chuẩn, du
 trong lượt đang chạy. Receiver kiểm tra peer_id khớp IP nguồn kết nối và tcp_port
 trong OPEN. Endpoint identity không phải xác thực người dùng.
 
-Member 2 accept nhanh rồi đọc OPEN trong worker, timeout 3 giây, giới hạn worker.
+Member 2 accept nhanh rồi đọc OPEN trong worker. Deadline tuyệt đối là **3 giây
+tính từ accept**, áp dụng chung cho 4 byte độ dài, JSON header và payload rỗng.
+Mỗi recv dùng thời gian còn lại; gửi nhỏ giọt không gia hạn deadline. Adapter
+trong chat.py dùng lại recv_frame, không buffer hoặc đọc dư sang frame kế tiếp.
+
+Tối đa **16 worker nhận OPEN đồng thời** (MAX_HANDSHAKES trong chat.py, độc lập
+max_transfers của file manager). Hết slot thì đóng ngay kết nối mới, không tạo
+worker/hàng đợi chờ slot. OPEN xong, sai, thiếu byte hoặc hết hạn đều trả slot.
+Socket đã phân loại bỏ timeout OPEN; file manager đặt timeout file riêng.
 Dùng recv_frame lấy OPEN/payload rỗng và phân loại purpose:
 
 - chat: chat.py độc quyền đọc/đóng socket, tuần tự hóa ghi frame bằng lock.
@@ -124,6 +132,11 @@ progress 0% tới khi hoàn tất thì 100%, không chia 0. Progress tối đa k
 
 - MSG payload UTF-8, nhận đủ byte rồi decode. BYE chỉ rời một phiên chat.
 - Chat sở hữu history/unread trong bộ nhớ; GUI không đếm bản riêng.
+- History và mỗi snapshot giữ tối đa **500 tin gần nhất mỗi peer**, gồm cả tin
+  gửi/nhận/lỗi. Thêm tin thứ 501 loại tin cũ nhất. Kết quả gửi về muộn chỉ cập
+  nhật object tin đó; không chèn lại tin đã bị loại.
+- Unread đếm mọi tin đến chưa đọc kể từ lần mở hội thoại gần nhất, kể cả tin đã
+  bị loại khỏi history. Vì vậy unread có thể lớn hơn 500; chọn peer reset về 0.
 - `select_peer(id)`/`select_peer(None)` đổi active peer. Cùng lock với xử lý tin
   đến, đặt active và reset unread của peer được chọn.
 - Mọi thay đổi history/unread phát snapshot `conversation`, revision tăng theo
@@ -131,6 +144,22 @@ progress 0% tới khi hoàn tất thì 100%, không chia 0. Progress tối đa k
 - Tin của active peer unread=0, peer khác tăng unread; lịch sử theo phiên chạy.
 - Lỗi gửi cập nhật message state="failed", phát operation_failed.
 - Kết nối/send/recv chạy nền; callback UI nhận lệnh và trả nhanh.
+
+### Hai peer mở chat đồng thời
+
+Mỗi kết nối được xếp hạng bằng cặp `(peer_id bên khởi tạo, TCP source port)`.
+So sánh peer_id theo thứ tự từ điển của chuỗi IPv4:TCP_port; so sánh source port
+bằng số khi cùng bên khởi tạo. Hai đầu lấy cùng thông tin từ OPEN và endpoint
+của socket. Giữ kết nối có hạng nhỏ nhất khi có kết nối trùng. Nếu chỉ một bên
+kết nối thì dùng ngay kết nối đó, bất kể hạng.
+
+Khi thay thế, kết nối dư ngừng nhận lệnh gửi mới. Worker đợi frame đang ghi
+hoàn tất dưới write lock rồi shutdown(SHUT_WR). Luồng nhận vẫn đọc hết MSG
+đã gửi trên kết nối dư tới EOF và đóng socket; không gửi lại các MSG này.
+Hai đầu hội tụ về một kết nối sau khi đọc hết dữ liệu cũ. Trong giai đoạn
+chuyển tiếp có thể còn socket đang đọc nốt; lệnh gửi mới chỉ dùng kết nối giữ lại.
+Cleanup nhận diện đúng object session, nên worker cũ không xóa session mới
+khi reconnect. leave/stop vẫn đóng mọi socket chat đang được quản lý.
 
 ## 7. GUI và sự kiện
 

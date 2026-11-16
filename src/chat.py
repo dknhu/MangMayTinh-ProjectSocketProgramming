@@ -8,10 +8,32 @@ import time
 
 from .protocol import MAX_CONTROL_BYTES, ProtocolError, peer_id, recv_frame, send_frame
 
+MAX_HISTORY = 500
+OPEN_TIMEOUT = 3.0
+MAX_HANDSHAKES = 16
+
+
+class _OpenReader:
+    """Give the existing frame parser one deadline across all its recv calls."""
+
+    def __init__(self, sock, deadline):
+        self.sock = sock
+        self.deadline = deadline
+
+    def recv(self, count):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Quá 3 giây để nhận OPEN")
+        self.sock.settimeout(remaining)
+        data = self.sock.recv(count)
+        if time.monotonic() >= self.deadline:
+            raise TimeoutError("Quá 3 giây để nhận OPEN")
+        return data
+
 
 @dataclass
 class _Conversation:
-    messages: list = field(default_factory=list)
+    messages: deque = field(default_factory=lambda: deque(maxlen=MAX_HISTORY))
     unread: int = 0
     revision: int = 0
 
@@ -20,6 +42,8 @@ class _Conversation:
 class _Session:
     sock: socket.socket
     name: str
+    rank: tuple
+    retiring: bool = False
     write_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -40,7 +64,7 @@ class ChatService:
         self._stopped = False
         self._workers = set()
         self._sockets = set()
-        self._handshakes = threading.BoundedSemaphore(16)
+        self._handshakes = threading.BoundedSemaphore(MAX_HANDSHAKES)
         self._sessions = {}
         self._outboxes = {}
         self._conversations = {}
@@ -87,7 +111,7 @@ class ChatService:
             if peer_id is not None:
                 self._conversation(peer_id).unread = 0
                 self._publish(peer_id)
-                if peer_id not in self._sessions and peer_id not in self._outboxes:
+                if self._current_session(peer_id) is None and peer_id not in self._outboxes:
                     self._enqueue(peer_id, (None, b""))
 
     def send_message(self, peer_id, text):
@@ -174,6 +198,7 @@ class ChatService:
         while True:
             try:
                 conn, (source_ip, _) = listener.accept()
+                deadline = time.monotonic() + OPEN_TIMEOUT
             except socket.timeout:
                 continue
             except OSError as exc:
@@ -187,19 +212,18 @@ class ChatService:
                     continue
                 self._sockets.add(conn)
                 try:
-                    self._start_worker(self._incoming, conn, source_ip)
+                    self._start_worker(self._incoming, conn, source_ip, deadline)
                 except RuntimeError as exc:
                     self._handshakes.release()
                     self._sockets.remove(conn)
                     conn.close()
                     self._error(exc)
 
-    def _incoming(self, conn, source_ip):
+    def _incoming(self, conn, source_ip, deadline):
         handed_off = False
         session = None
         try:
-            conn.settimeout(3)
-            opening, _ = recv_frame(conn)
+            opening, _ = recv_frame(_OpenReader(conn, deadline))
             purpose = opening.get("purpose")
             if opening["type"] != "OPEN" or purpose not in ("chat", "file"):
                 raise ProtocolError("Frame đầu phải là OPEN chat hoặc file")
@@ -207,6 +231,7 @@ class ChatService:
                 if self._stopped:
                     return
                 if purpose == "file":
+                    conn.settimeout(None)
                     self._sockets.remove(conn)
                     handed_off = True
                 else:
@@ -216,8 +241,8 @@ class ChatService:
                             or not isinstance(name, str) or not name.strip()):
                         raise ProtocolError("Danh tính peer trong OPEN không hợp lệ")
                     conn.settimeout(None)
-                    session = _Session(conn, name)
-                    self._sessions.setdefault(pid, []).append(session)
+                    session = _Session(conn, name, (pid, conn.getpeername()[1]))
+                    self._register_session(pid, session)
         except (OSError, ValueError) as exc:
             with self._lock:
                 if not self._stopped:
@@ -246,6 +271,31 @@ class ChatService:
                 raise
         outbox.append(item)
 
+    def _current_session(self, pid):
+        # Caller holds the state lock. Retiring sockets only drain incoming data.
+        return next((session for session in self._sessions.get(pid, ())
+                     if not session.retiring), None)
+
+    def _register_session(self, pid, session):
+        # Both endpoints see the same initiator ID and ephemeral source port.
+        sessions = self._sessions.setdefault(pid, [])
+        current = self._current_session(pid)
+        sessions.append(session)
+        if current is None:
+            return
+        loser = max((current, session), key=lambda candidate: candidate.rank)
+        loser.retiring = True
+        self._start_worker(self._retire, loser)
+
+    def _retire(self, session):
+        # Finish any in-flight frame, then FIN. The reader drains the peer's
+        # already-sent frames until its FIN, without replaying any message.
+        with session.write_lock:
+            try:
+                session.sock.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+
     def _send(self, pid, outbox):
         while True:
             with self._lock:
@@ -255,17 +305,22 @@ class ChatService:
                     del self._outboxes[pid]
                     return
                 message, payload = outbox.popleft()
-                sessions = self._sessions.get(pid)
-                session = sessions[0] if sessions else None
+                session = self._current_session(pid)
             try:
-                if session is None:
-                    session = self._connect(pid, outbox)
-                if message is not None:
+                while True:
+                    if session is None:
+                        session = self._connect(pid, outbox)
                     with session.write_lock:
                         with self._lock:
                             if self._stopped or self._outboxes.get(pid) is not outbox:
                                 raise ConnectionAbortedError("Phiên chat đã đóng")
-                        send_frame(session.sock, {"type": "MSG"}, payload)
+                            current = self._current_session(pid)
+                            if session is not current:
+                                session = current
+                                continue
+                        if message is not None:
+                            send_frame(session.sock, {"type": "MSG"}, payload)
+                        break
             except (OSError, ValueError, LookupError, RuntimeError) as exc:
                 if session is not None:
                     self._drop(pid, session)
@@ -289,7 +344,6 @@ class ChatService:
             raise ValueError("Địa chỉ peer không hợp lệ")
         name = peer["name"]
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        session = _Session(sock, name)
         try:
             with self._lock:
                 if self._stopped or self._outboxes.get(pid) is not outbox:
@@ -303,15 +357,15 @@ class ChatService:
                               "peer_id": self._local["peer_id"], "name": self._local["name"],
                               "tcp_port": self._local["tcp_port"]})
             sock.settimeout(None)
+            session = _Session(sock, name, (self._local["peer_id"], sock.getsockname()[1]))
             with self._lock:
                 if self._stopped or self._outboxes.get(pid) is not outbox:
                     raise ConnectionError("Phiên chat đã đóng")
-                sessions = self._sessions.setdefault(pid, [])
-                sessions.append(session)
+                self._register_session(pid, session)
                 try:
                     self._start_worker(self._receive, pid, session)
                 except RuntimeError:
-                    sessions.remove(session)
+                    self._sessions[pid].remove(session)
                     raise
         except BaseException:
             self._release(sock)
@@ -324,7 +378,8 @@ class ChatService:
                 header, payload = recv_frame(session.sock)
                 if header["type"] == "BYE":
                     with self._lock:
-                        if not self._stopped and session in self._sessions.get(pid, ()):
+                        if (not self._stopped and not session.retiring
+                                and session in self._sessions.get(pid, ())):
                             self._error(f"{session.name} đã rời phiên chat")
                     return
                 if header["type"] != "MSG":
@@ -342,7 +397,8 @@ class ChatService:
                     self._publish(pid)
         except (OSError, ValueError) as exc:
             with self._lock:
-                if not self._stopped and session in self._sessions.get(pid, ()):
+                if (not self._stopped and not session.retiring
+                        and session in self._sessions.get(pid, ())):
                     self._error(f"Chat với {session.name}: {exc}")
         finally:
             self._drop(pid, session)
@@ -354,7 +410,8 @@ class ChatService:
                 sessions.remove(session)
                 if not sessions:
                     del self._sessions[pid]
-        self._release(session.sock)
+        with session.write_lock:
+            self._release(session.sock)
 
     def _leave(self, sessions):
         for session in sessions:
