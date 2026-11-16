@@ -1,5 +1,4 @@
 """Integrated UDP discovery, TCP chat/file transfer, and Tkinter entry point.
-
 Run as python -m src.main. Only the GUI consumes backend events.
 """
 
