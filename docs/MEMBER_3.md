@@ -15,11 +15,16 @@
 > Thử hai cửa sổ Như ↔ Minh bằng `python -m src.member3_demo --pair`.
 > Chat nội bộ mô phỏng, file TCP thật; hướng dẫn ở MEMBER_3_HANDOFF.
 
+> **Kiểm thử tích hợp 15/11/2026 — #9:** Đã thêm
+> `tests/test_gui_integration.py` với GUI và backend production qua UDP/TCP
+> loopback. Toàn bộ **67 test đạt**; chat hai chiều, unread, giữ draft và
+> truyền file 8 MiB đồng thời chat đã được kiểm tra. Hai máy LAN vẫn chờ #10.
+
 ## A. GUI — làm khung trước
 
 - [x] Tạo cửa sổ Tkinter có: tên user, status Online/Away, danh sách peer, vùng chat, ô nhập, nút gửi, nút chọn file.
-- [ ] Hiển thị `name`, IP, online/away và thông báo peer vào/ra từ Member 1.
-- [ ] Chọn peer để chat; hiển thị lịch sử, unread và tin mới từ Member 2.
+- [x] Hiển thị `name`, IP, online/away và thông báo peer vào/ra từ Member 1 (đã có test component và tích hợp production local; LAN chờ #10).
+- [x] Chọn peer để chat; hiển thị lịch sử, unread và tin mới từ Member 2 (đã kiểm tra GUI với ChatService thật trên loopback).
 - [x] Khi tin đến, giữ nguyên nội dung user đang gõ (đã kiểm tra với event backend).
 - [x] Có thao tác Rời hội thoại, Trợ giúp, Thoát.
 - [x] Nhận sự kiện mạng qua `queue`; **không cập nhật Tkinter trực tiếp từ luồng nền**.
@@ -30,7 +35,7 @@
 - [x] Đọc tên file, kích thước và gửi **bytes thật** qua TCP.
 - [x] Nhận **đúng số bytes** đã khai báo rồi lưu trong `downloads/`.
 - [x] Hiển thị % theo `bytes_sent / total_bytes × 100` (xử lý riêng file 0 byte).
-- [x] Gửi file trong **thread nền**, GUI vẫn xử lý tin và lệnh gửi (chat TCP thật chờ member 2).
+- [x] Gửi file trong **thread nền**, GUI vẫn xử lý tin và lệnh gửi (đã kiểm tra chat TCP thật khi file đang truyền trên loopback).
 - [x] Xử lý file không tồn tại, mất kết nối, gửi dở; **xóa file nhận chưa hoàn tất**.
 - [x] Kiểm tra file nhận có nội dung giống file nguồn (đếm byte và SHA-256).
 

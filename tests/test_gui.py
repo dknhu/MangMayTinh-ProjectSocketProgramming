@@ -1,4 +1,5 @@
 import gc
+import hashlib
 from pathlib import Path
 import queue
 import tempfile
@@ -233,6 +234,94 @@ class GuiTests(unittest.TestCase):
             self.window._on_file()
         self.root.update()
         self.assertFalse(any(name == "send_file" for name, args in self.calls))
+
+    def received_file(self, path, body):
+        path.write_bytes(body)
+        self.window.process_event({
+            "type": "transfer_completed", "transfer_id": "received", "peer_id": self.minh,
+            "filename": path.name, "direction": "receive", "percent": 100,
+            "path": str(path), "sha256": hashlib.sha256(body).hexdigest(),
+        })
+        self.window.transfer_tree.selection_set("received")
+        self.window._on_transfer_selected()
+
+    def test_save_received_file_cancel_and_missing_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, target = Path(directory) / "received.bin", Path(directory) / "saved.bin"
+            self.received_file(source, b"received bytes")
+            self.assertNotIn("disabled", self.window.save_button.state())
+            with patch("src.gui.filedialog.asksaveasfilename", return_value=""):
+                self.window._on_save_received()
+            self.assertFalse(self.window._saving_file)
+            self.assertFalse(target.exists())
+            source.unlink()
+            target.write_bytes(b"existing file")
+            with patch("src.gui.filedialog.asksaveasfilename", return_value=str(target)):
+                self.window._on_save_received()
+            self.pump_until(lambda: not self.window._saving_file)
+            self.assertIn("Lỗi save_received", self.window.notice_var.get())
+            self.assertEqual(target.read_bytes(), b"existing file")
+
+    def test_save_received_file_checks_hash_and_preserves_destination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, target = Path(directory) / "received.bin", Path(directory) / "saved.bin"
+            self.received_file(source, b"original")
+            source.write_bytes(b"modified after receive")
+            target.write_bytes(b"keep this")
+            with patch("src.gui.filedialog.asksaveasfilename", return_value=str(target)):
+                self.window._on_save_received()
+            self.pump_until(lambda: not self.window._saving_file)
+            self.assertIn("bị thay đổi", self.window.notice_var.get())
+            self.assertEqual(target.read_bytes(), b"keep this")
+            self.assertEqual(list(Path(directory).glob(".lan-save-*.part")), [])
+
+    def test_save_received_file_same_path_runs_off_tk_thread(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "received.bin"
+            self.received_file(source, b"safe same path")
+            original_save = self.window._save_received
+            started, release = threading.Event(), threading.Event()
+            worker_threads = []
+
+            def save(*args):
+                worker_threads.append(threading.get_ident())
+                started.set()
+                if not release.wait(3):
+                    raise TimeoutError("Test did not release copy")
+                return original_save(*args)
+
+            with patch.object(self.window, "_save_received", side_effect=save):
+                try:
+                    with patch("src.gui.filedialog.asksaveasfilename", return_value=str(source)):
+                        self.window._on_save_received()
+                    self.pump_until(started.is_set)
+                    self.assertIn("disabled", self.window.save_button.state())
+                    ticks = []
+                    self.root.after(0, lambda: ticks.append(True))
+                    self.pump_until(lambda: bool(ticks))
+                    self.assertNotEqual(worker_threads, [threading.get_ident()])
+                finally:
+                    release.set()
+                self.pump_until(lambda: not self.window._saving_file)
+            self.assertEqual(source.read_bytes(), b"safe same path")
+            self.assertIn("Đã lưu tệp tại:", self.window.notice_var.get())
+
+    def test_save_only_enabled_for_completed_received_files(self):
+        with patch("src.gui.filedialog.asksaveasfilename") as dialog:
+            for kind, direction in (("transfer_progress", "receive"),
+                                    ("transfer_failed", "receive"),
+                                    ("transfer_completed", "send")):
+                tid = kind + direction
+                self.window.process_event({
+                    "type": kind, "transfer_id": tid, "peer_id": self.minh,
+                    "filename": "file.bin", "direction": direction, "percent": 100,
+                    "path": "unused", "sha256": "unused",
+                })
+                self.window.transfer_tree.selection_set(tid)
+                self.window._on_transfer_selected()
+                self.assertIn("disabled", self.window.save_button.state())
+                self.window._on_save_received()
+            dialog.assert_not_called()
 
     def test_paired_windows_exchange_chat_and_send_real_file(self):
         from src.member3_pair_demo import create_demo_pair

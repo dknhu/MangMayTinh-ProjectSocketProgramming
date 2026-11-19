@@ -24,6 +24,19 @@ chưa được nghiệm thu. Bản local không giả thành công các bước 
 
 ## 2. Chạy ngay
 
+### Lưu tệp đã nhận từ GUI
+
+Tệp được tự lưu vào `downloads/` của máy nhận (demo cặp dùng thư mục riêng
+cho mỗi cửa sổ như hướng dẫn bên dưới). Sau khi nhận đủ dữ liệu và kiểm SHA-256,
+bên nhận gửi FILE_OK; chỉ khi xác nhận khớp, bên gửi mới báo Hoàn tất và
+“Bên nhận đã xác nhận lưu tệp”. 100% byte gửi chưa phải xác nhận hoàn tất.
+
+Ở máy nhận, chọn dòng **Nhận / Hoàn tất** trong **TỆP ĐÍNH KÈM**, bấm
+**Lưu thành…**, chọn thư mục/tên và bấm Save. GUI lưu một bản sao, giữ file
+đã nhận trong downloads. Nút chỉ bật cho file nhận hoàn tất, không bật cho
+file đang truyền, gửi đi hoặc bị lỗi. File nguồn bị xóa/thay đổi sẽ báo lỗi;
+chọn lại đúng đường dẫn file nhận cũng an toàn. Copy và kiểm hash chạy nền.
+
 ### Demo hai cửa sổ Như ↔ Minh (13/11/2026)
 
 Chạy **một lệnh** để kiểm tra ngay GUI và truyền tệp mà không cần cấu hình peer:

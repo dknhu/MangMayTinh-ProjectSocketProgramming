@@ -93,3 +93,56 @@ qua callback, chờ cả hai phía Hoàn tất.
 
 Đây là kiểm thử demo local; TCP ChatService, UDP discovery và hai máy LAN vẫn
 cần Member 1–2 triển khai/tích hợp/nghiệm thu.
+
+## Regression GUI với backend production — 15/11/2026 (#9)
+
+Đã đưa kịch bản smoke trước đây vào `tests/test_gui_integration.py`, dùng
+`ChatWindow`, `Application`, `DiscoveryService`, `ChatService` và
+`FileTransferManager` thật. Mỗi GUI là consumer duy nhất của queue do
+Application tạo; test không lấy event khỏi queue, không giả lập conversation
+và không dùng chat relay của paired demo.
+
+Chạy riêng hoặc cùng suite:
+
+```powershell
+python -X utf8 -m unittest discover -s tests -p test_gui_integration.py -v
+python -X utf8 -m unittest discover -s tests -v
+```
+
+Kết quả trên Windows, Python 3.14.6: **2 test tích hợp mới đạt**; toàn bộ
+**67 test đạt trong 12.493 giây**. Source nền là `5b18bf9`, cùng nội dung với
+main tại `73e9715`, cộng các test của #9. Các số test ở mục trước là kết quả
+theo từng mốc lịch sử.
+
+- UDP thật đưa tên/IP/TCP port/status lên GUI; đổi away qua callback GUI và
+  DiscoveryService, sau đó gửi presence qua UDP tới app đối phương để kiểm
+  tra cập nhật trạng thái từ parser tới giao diện.
+- GUI gửi/nhận chat TCP Unicode hai chiều; tin đến giữ draft, vị trí con trỏ
+  và focus của cửa sổ ẩn. Peer thứ ba cũng dùng Application/ChatWindow thật;
+  unread xuất hiện ở danh sách, chọn hội thoại reset unread, đổi lại giữ draft.
+- Chọn file qua callback dialog, truyền **8 MiB** TCP thật; receiver được giữ
+  tại một mốc giữa body bằng threading.Event. Khi receiver chưa được thả,
+  cả hai GUI vẫn gửi/nhận TCP chat và xử lý timer. Điều này xác nhận có overlap,
+  không phụ thuộc việc máy truyền file nhanh hay chậm.
+- Sau khi thả receiver, cả hai GUI phải hiện Hoàn tất/100%; số byte, SHA-256
+  và toàn bộ nội dung file nhận phải khớp, không còn `.lan-*.part`.
+- Cổng được OS cấp, file nằm trong TemporaryDirectory. Cleanup chạy cả khi
+  setup/assertion lỗi: đóng GUI trên Tk thread, shutdown service ngoài Tk
+  thread, join worker, kiểm socket đã đóng rồi xóa thư mục tạm. Đã chạy thêm
+  probe chèn assertion lỗi lúc receiver đang dừng giữa body: không còn worker
+  hoặc thư mục tạm sau cleanup (probe này không tính vào 67 test).
+
+**Giới hạn:** discovery trong test dùng UDP **unicast**, cổng riêng cho từng
+app và địa chỉ loopback. Presence được gửi có kiểm soát để tránh phụ thuộc
+router/firewall; test này không xác nhận UDP broadcast trên LAN hoặc lịch
+heartbeat giữa hai máy. Cửa sổ được ẩn nên vẫn cần rà focus/hiển thị trực quan.
+Nghiệm thu hai máy vật lý, Wireshark, report và demo theo
+[issue #10](https://github.com/dknhu/MangMayTinh-ProjectSocketProgramming/issues/10).
+
+### Bổ sung thao tác Lưu thành… — 15/11/2026
+
+Suite đạt **71 test trong 15.235 giây** sau khi thêm nút lưu bản sao ở bên
+nhận. Test tích hợp nhận file TCP 8 MiB rồi bấm nút lưu vào đường dẫn được
+chọn, xác nhận bytes/hash của bản sao và bản nhận ban đầu. Test GUI kiểm
+tra hủy dialog, nguồn mất/thay đổi, bảo toàn file đích khi copy lỗi, chọn
+trùng đường dẫn, điều kiện bật nút và Tk vẫn xử lý timer khi copy chạy nền.

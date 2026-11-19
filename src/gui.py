@@ -6,7 +6,11 @@ Conversation snapshots (history + unread + revision) belong to chat.py.
 """
 
 from dataclasses import dataclass
+import hashlib
+import os
+from pathlib import Path
 import queue
+import tempfile
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -84,6 +88,7 @@ class ChatWindow:
         self._selected_peer = None
         self._pending_send = set()
         self._transfers = {}
+        self._saving_file = False
         self._local_status = "online"
         self._worker = threading.Thread(target=self._command_loop, name="ui-commands")
         self._build(username, demo)
@@ -260,9 +265,14 @@ class ChatWindow:
         tk.Label(transfer, text="TỆP ĐÍNH KÈM", background=c["panel"],
                  foreground=c["ink"], font=("Segoe UI", 9, "bold")).grid(
                      row=0, column=0, sticky="w")
-        self.cancel_button = ttk.Button(transfer, text="Hủy lượt chọn",
+        transfer_actions = tk.Frame(transfer, background=c["panel"])
+        transfer_actions.grid(row=0, column=1, sticky="e", pady=(0, 6))
+        self.save_button = ttk.Button(transfer_actions, text="Lưu thành…",
+                                      style="Small.Rose.TButton", command=self._on_save_received)
+        self.save_button.pack(side="left", padx=(0, 6))
+        self.cancel_button = ttk.Button(transfer_actions, text="Hủy lượt chọn",
                                         style="Small.Rose.TButton", command=self._on_cancel)
-        self.cancel_button.grid(row=0, column=1, sticky="e", pady=(0, 6))
+        self.cancel_button.pack(side="left")
         self.transfer_tree = ttk.Treeview(
             transfer, columns=("file", "peer", "direction", "progress", "state"),
             show="headings", height=2, selectmode="browse", style="Rose.Transfer.Treeview")
@@ -400,7 +410,8 @@ class ChatWindow:
         while True:
             name, args, context = self._commands.get()
             try:
-                result = getattr(self.actions, name)(*args)
+                operation = self._save_received if name == "save_received" else getattr(self.actions, name)
+                result = operation(*args)
             except Exception as exc:
                 self.events.put({"type": "ui_command_result", "command": name,
                                  "error": str(exc), **context})
@@ -484,6 +495,11 @@ class ChatWindow:
     def _command_result(self, event):
         name = event["command"]
         error = event.get("error")
+        if name == "save_received":
+            self._saving_file = False
+            if not error:
+                self.notice_var.set(f"Đã lưu tệp tại: {event['result']}")
+            self._update_controls()
         if name == "send_message":
             pid, text = event["peer_id"], event["text"]
             self._pending_send.discard(pid)
@@ -579,6 +595,8 @@ class ChatWindow:
         self.file_button.configure(state="normal" if can_send else "disabled")
         self.leave_button.configure(state="normal" if pid and not self._closing else "disabled")
         self.cancel_button.configure(state="disabled" if self._closing else "normal")
+        self.save_button.configure(state="normal" if self._received_selection()
+                                   and not self._closing and not self._saving_file else "disabled")
 
     def select_peer(self, pid):
         """Main-thread selection API, also useful to integration tests."""
@@ -659,12 +677,70 @@ class ChatWindow:
             self.progress_var.set(percent)
         if current["type"] in terminal:
             detail = current.get("warning") or current.get("path") or current.get("saved_as", "")
-            self.notice_var.set(f"{current['filename']}: {state} {detail}")
+            if current["type"] == "transfer_completed":
+                confirmation = ("Đã nhận và lưu; chọn Lưu thành… để lưu nơi khác"
+                                if current["direction"] == "receive"
+                                else "Bên nhận đã xác nhận lưu tệp")
+                self.notice_var.set(f"{current['filename']}: {confirmation}. {detail}")
+            else:
+                self.notice_var.set(f"{current['filename']}: {state} {detail}")
+        self._update_controls()
 
     def _on_transfer_selected(self, _event=None):
         selected = self.transfer_tree.selection()
         if selected:
             self.progress_var.set(self._transfers[selected[0]].get("percent", 0))
+        self._update_controls()
+
+    def _received_selection(self):
+        selected = self.transfer_tree.selection()
+        transfer = self._transfers.get(selected[0], {}) if selected else {}
+        if (transfer.get("direction") == "receive"
+                and transfer.get("type") == "transfer_completed"
+                and transfer.get("path") and transfer.get("sha256")):
+            return transfer
+        return None
+
+    def _on_save_received(self):
+        transfer = self._received_selection()
+        if not transfer or self._closing or self._saving_file:
+            return
+        source = Path(transfer["path"])
+        destination = filedialog.asksaveasfilename(
+            parent=self.root, title="Lưu tệp đã nhận", initialfile=source.name,
+            confirmoverwrite=True)
+        if destination and not self._closing:
+            self._saving_file = True
+            self.notice_var.set("Đang lưu tệp đã nhận…")
+            self._update_controls()
+            self._submit("save_received", str(source), destination, transfer["sha256"])
+
+    @staticmethod
+    def _save_received(source, destination, expected_hash):
+        """Copy off the Tk thread; publish only a complete, verified copy."""
+        destination = Path(destination).absolute()
+        temporary = None
+        try:
+            # Stage alongside the destination so a failed copy preserves any
+            # existing file. Also handles choosing the original received path.
+            with open(source, "rb") as incoming:
+                with tempfile.NamedTemporaryFile(
+                        dir=destination.parent, prefix=".lan-save-", suffix=".part",
+                        delete=False) as output:
+                    temporary = Path(output.name)
+                    digest = hashlib.sha256()
+                    for chunk in iter(lambda: incoming.read(64 * 1024), b""):
+                        output.write(chunk)
+                        digest.update(chunk)
+                    if digest.hexdigest() != expected_hash:
+                        raise ValueError("Tệp đã nhận bị thay đổi; không lưu bản sao")
+                    output.flush()
+                    os.fsync(output.fileno())
+            os.replace(temporary, destination)
+            return str(destination)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def _on_cancel(self):
         selected = self.transfer_tree.selection()
@@ -679,6 +755,7 @@ class ChatWindow:
             "Chọn file để gửi cho người đang chat; vẫn có thể chat khi truyền.\n"
             "100% đang gửi chưa phải hoàn tất: cần bên nhận xác nhận lưu.\n"
             "File nhận nằm trong downloads/; file trùng được thêm số.\n"
+            "Chọn tệp Nhận đã Hoàn tất → Lưu thành… để chọn nơi lưu khác.\n"
             "Rời hội thoại giữ lịch sử, bản nháp và các lượt truyền.\n"
             "Online/Away đổi trạng thái hiện diện. Thoát dừng các module."
         ), parent=self.root)
